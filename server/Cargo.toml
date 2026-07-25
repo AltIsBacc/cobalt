@@ -1,0 +1,21 @@
+[package]
+name = "cobalt-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+cobalt-common.workspace = true
+cobalt-format.workspace = true
+cobalt-protocol.workspace = true
+
+tokio.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+derive_more.workspace = true
+getset.workspace = true
+
+renet.workspace = true
+spin_sleep_util.workspace = true
+rayon.workspace = true
+

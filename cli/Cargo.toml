@@ -1,0 +1,21 @@
+[package]
+name = "cobalt-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+cobalt-common.workspace = true
+cobalt-format.workspace = true
+cobalt-server.workspace = true
+
+anyhow.workspace = true
+derive_more.workspace = true
+
+tokio.workspace = true
+clap.workspace = true
+async-trait.workspace = true
+rustyrepl.workspace = true
+spin_sleep_util.workspace = true
+inquire.workspace = true
+

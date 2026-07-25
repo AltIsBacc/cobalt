@@ -1,0 +1,34 @@
+[workspace]
+members = ["format", "protocol", "cli", "server", "common"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["AltIsBacc"]
+
+[workspace.dependencies]
+cobalt-common = { path = "common" }
+cobalt-format = { path = "format" }
+cobalt-protocol = { path = "protocol" }
+cobalt-server = { path = "server" }
+cobalt-cli = { path = "cli" }
+
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros", "sync", "parking_lot", "io-util", "io-std"] }
+chrono = "0.4"
+uuid = "1"
+getset = "0.1"
+num_enum = "0.7"
+strum = { version = "0.28", features = ["derive"] }
+enumflags2 = { version = "0.7", features = ["std"] }
+derive_more = { version = "1", features = ["full"] }
+renet = "0.0.10"
+spin_sleep_util = "0.1"
+rayon = "1"
+clap = { version = "4", features = ["derive"] }
+async-trait = "0.1"
+rustyrepl = { version = "0.2", features = ["async"] }
+inquire = "0.9"
+
