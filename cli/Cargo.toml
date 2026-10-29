@@ -12,10 +12,9 @@ cobalt-server.workspace = true
 anyhow.workspace = true
 derive_more.workspace = true
 
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 clap.workspace = true
 async-trait.workspace = true
 rustyrepl.workspace = true
-spin_sleep_util.workspace = true
 inquire.workspace = true
 

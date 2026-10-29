@@ -1,5 +1,5 @@
 use std::{thread, time::{Duration, Instant}};
-
+use thread_priority::{ThreadBuilderExt, ThreadPriority};
 use tokio::sync::{mpsc, watch};
 
 pub struct ServerTicker {
@@ -22,29 +22,42 @@ impl ServerTicker {
     }
 
     pub fn spawn(self, tick_callback: mpsc::Sender<f32>) -> thread::JoinHandle<()> {
-        let tick_speed_rx = self.tick_speed_rx;
+        let mut tick_speed_rx = self.tick_speed_rx;
 
         thread::Builder::new()
             .name("cobalt-serverticker".to_string())
-            .spawn(move || {
-                let target_dt = Duration::from_secs(1) / *tick_speed_rx.borrow();
+            .spawn_with_priority(ThreadPriority::Max, move |r| {
+                if r.is_err() {
+                    eprintln!("[ticker] failed to set max thread priority..");
+                }
+
+                let mut current_speed = *tick_speed_rx.borrow();
+                let mut target_dt = Duration::from_secs(1) / current_speed;
                 let mut interval = spin_sleep_util::interval(target_dt);
                 
                 let mut last_successful_tick = Instant::now();
                 let mut dropped_ticks_counter = 0u64;
 
                 loop {
+                    if tick_speed_rx.has_changed().unwrap_or(false) {
+                        let new_speed = *tick_speed_rx.borrow_and_update();
+                        if new_speed != current_speed && new_speed > 0 {
+                            current_speed = new_speed;
+                            target_dt = Duration::from_secs(1) / current_speed;
+                            interval = spin_sleep_util::interval(target_dt);
+                        }
+                    }
+
                     let scheduled_tick_time = interval.tick(); 
 
                     let now = Instant::now();
                     let thread_delay = now.duration_since(scheduled_tick_time);
 
                     if thread_delay > target_dt {
-                        let missed_ticks = (thread_delay.as_secs_f64() / target_dt.as_secs_f64()).floor() as u64;
                         eprintln!(
-                            "[ticker] we are lagging behind! a tick took {:.2}ms. missed approx {} tick(s)",
+                            "[ticker] we are lagging behind! a tick took {:.2}ms. missed approx {:.4} tick(s)",
                             thread_delay.as_secs_f32() * 1000.0,
-                            missed_ticks
+                            thread_delay.as_secs_f32() / target_dt.as_secs_f32()
                         );
                     }
 

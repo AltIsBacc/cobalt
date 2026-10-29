@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use anyhow::Result;
 use async_trait::async_trait;
 use cobalt_common::utils::bi_channel::CobaltSender;
-use cobalt_server::messages::{CobaltCommand, CobaltResponse};
+use cobalt_server::commands::{CobaltCommand, CobaltResponse};
 use derive_more::derive::{Constructor, Deref, DerefMut};
 use rustyrepl::{Repl, ReplCommandProcessor};
 
