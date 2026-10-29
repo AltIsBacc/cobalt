@@ -1,13 +1,11 @@
 use std::io;
 
-pub type CobaltNetworkResult<T = ()> = Result<T, CobaltNetworkError>;
+use thiserror::Error;
+
+pub type NetResult<T = ()> = Result<T, NetError>;
 
 #[derive(Debug, Error)]
-pub enum CobaltNetworkError {
+pub enum NetError {
     #[error(transparent)]
-    IO(#[from] io::Error),
-
-    #[error("Failed to join the server. Is the server full?")]
-    FailedToJoin,
+    Io(#[from] io::Error),
 }
-

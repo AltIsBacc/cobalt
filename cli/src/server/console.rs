@@ -2,8 +2,7 @@ use std::fmt::Debug;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use cobalt_common::utils::bi_channel::CobaltSender;
-use cobalt_server::commands::{CobaltCommand, CobaltResponse};
+use cobalt_server::RunningServer;
 use derive_more::derive::{Constructor, Deref, DerefMut};
 use rustyrepl::{Repl, ReplCommandProcessor};
 
@@ -12,7 +11,7 @@ use crate::server::console::commands::{Cli, ConsoleCommand};
 pub mod commands;
 
 #[derive(Constructor, Deref, DerefMut)]
-pub struct ServerConsole(CobaltSender<CobaltCommand, CobaltResponse>);
+pub struct ServerConsole(RunningServer);
 
 impl ServerConsole {
     pub async fn start(self) -> Result<()> {

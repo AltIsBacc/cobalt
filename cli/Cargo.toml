@@ -2,10 +2,14 @@
 name = "cobalt-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
 
 [dependencies]
-cobalt-common.workspace = true
 cobalt-format.workspace = true
 cobalt-server.workspace = true
 

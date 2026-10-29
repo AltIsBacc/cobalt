@@ -1,20 +1,16 @@
 use std::path::Path;
 
 use anyhow::Result;
-use cobalt_format::world::loader::WorldLoader;
-use cobalt_server::CobaltServer;
+use cobalt_format::World;
+use cobalt_server::{Server, ServerConfig};
 
-use crate::server::{console::ServerConsole};
+use crate::server::console::ServerConsole;
 
 pub mod console;
 
-pub async fn new<S: AsRef<Path> + Send + 'static>(world_path: S) -> Result<ServerConsole> {
-    let handle = CobaltServer::spawn(
-        WorldLoader(world_path),
-        64, 3, /* increase if slow? */
-        60
-    )?;
+pub async fn new(world_path: impl AsRef<Path>) -> Result<ServerConsole> {
+    let world = World::load(world_path)?;
+    let running = Server::spawn(world, ServerConfig::default())?;
 
-    Ok(ServerConsole::new(handle.commands))
+    Ok(ServerConsole::new(running))
 }
-

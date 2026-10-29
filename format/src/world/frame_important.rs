@@ -1,59 +1,44 @@
-use derive_more::derive::{Deref, DerefMut};
+use std::fmt;
 
-use crate::{common::codec::{BinaryDecode, BinaryEncode}, io::{BinaryReader, BinaryWriter}, world::error::{WorldLoadingError, WorldSavingError}};
+use crate::{error::Result, reader::Reader};
 
-#[derive(Debug, Deref, DerefMut, PartialEq, Eq, Clone)]
-pub struct WorldFrameImportant(pub Vec<bool>);
+#[derive(Default, Clone, PartialEq, Eq)]
+pub struct FrameImportant(Box<[bool]>);
 
-impl BinaryDecode for WorldFrameImportant {
-    type Error = WorldLoadingError;
-    type Context<'a> = ();
+impl FrameImportant {
+    pub fn read(reader: &mut Reader<'_>) -> Result<Self> {
+        let count = usize::from(reader.u16()?);
+        let bytes = reader.take(count.div_ceil(8))?;
+        let flags = (0..count).map(|i| ((bytes[i / 8] >> (i % 8)) & 1) != 0).collect();
+        Ok(Self(flags))
+    }
 
-    fn decode<R: BinaryReader>(
-        _ctx: Option<&Self::Context<'_>>,
-        reader: &mut R
-    ) -> Result<Self, Self::Error> {
-        let count = reader
-            .u16()
-            .map_err(|_| WorldLoadingError::MalformedData("frame_important"))? as usize;
-
-        let count_bytes = count.div_ceil(8);
-
-        let mut value: Vec<bool> = Vec::with_capacity(count_bytes * 8);
-        for _ in 0..count_bytes {
-            let bits = reader
-                .bits() // reads 1 byte -> [bool; 8]
-                .map_err(|_| WorldLoadingError::MalformedData("frame_important"))?;
-            value.extend_from_slice(&bits);
-        }
-
-        value.truncate(count);
-        Ok(Self(value))
+    pub fn contains(&self, id: u16) -> bool {
+        self.0.get(usize::from(id)).copied().unwrap_or(false)
     }
 }
 
-impl BinaryEncode for WorldFrameImportant {
-    type Error = WorldSavingError;
-    type Context<'a> = ();
-
-    fn encode<W: BinaryWriter>(
-        &self,
-        _ctx: Option<&Self::Context<'_>>,
-        writer: &mut W
-    ) -> Result<(), Self::Error> {
-        writer
-            .u16(self.len() as u16)
-            .map_err(|_| WorldSavingError::WriteFailed("frame_important"))?;
-
-        for chunk in self.chunks(8) {
-            let mut byte = [false; 8];
-            byte[..chunk.len()].copy_from_slice(chunk);
-            writer
-                .bits(byte)
-                .map_err(|_| WorldSavingError::WriteFailed("frame_important"))?;
-        }
-
-        Ok(())
+impl fmt::Debug for FrameImportant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FrameImportant").field("len", &self.0.len()).finish()
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_bits_least_significant_first() {
+        let mut reader = Reader::new(&[10, 0, 0b0000_0101, 0b0000_0010]);
+        let frames = FrameImportant::read(&mut reader).unwrap();
+
+        assert!(frames.contains(0));
+        assert!(!frames.contains(1));
+        assert!(frames.contains(2));
+        assert!(frames.contains(9));
+        assert!(!frames.contains(10));
+        assert!(!frames.contains(u16::MAX));
+        assert_eq!(reader.remaining(), 0);
+    }
+}

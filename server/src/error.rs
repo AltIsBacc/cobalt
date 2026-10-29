@@ -1,15 +1,20 @@
-use anyhow::Error as AnyhowError;
-use cobalt_format::world::error::WorldLoadingError;
 use thiserror::Error;
 
-pub type CobaltServerResult<T = ()> = Result<T, CobaltServerError>;
+use crate::client::ClientId;
+
+pub type ServerResult<T = ()> = Result<T, ServerError>;
 
 #[derive(Debug, Error)]
-pub enum CobaltServerError {
-    #[error(transparent)]
-    WorldLoading(#[from] WorldLoadingError),
+pub enum ServerError {
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(&'static str),
 
-    #[error(transparent)]
-    Anyhow(#[from] AnyhowError),
+    #[error("the server is full")]
+    Full,
+
+    #[error("unknown client {0}")]
+    UnknownClient(ClientId),
+
+    #[error("the server is no longer running")]
+    Stopped,
 }
-
