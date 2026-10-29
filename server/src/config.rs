@@ -1,3 +1,5 @@
+use std::{net::SocketAddr, time::Duration};
+
 use crate::error::{ServerError, ServerResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6,6 +8,8 @@ pub struct ServerConfig {
     pub max_players: u8,
     pub command_capacity: usize,
     pub event_capacity: usize,
+    pub listen: Option<SocketAddr>,
+    pub handshake_timeout: Duration,
 }
 
 impl ServerConfig {
@@ -23,6 +27,9 @@ impl ServerConfig {
         if self.event_capacity == 0 {
             return Err(ServerError::InvalidConfig("event_capacity must be at least 1"));
         }
+        if self.handshake_timeout.is_zero() {
+            return Err(ServerError::InvalidConfig("handshake_timeout must be non-zero"));
+        }
 
         Ok(())
     }
@@ -30,7 +37,14 @@ impl ServerConfig {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { tick_rate: 60, max_players: 8, command_capacity: 256, event_capacity: 256 }
+        Self {
+            tick_rate: 60,
+            max_players: 8,
+            command_capacity: 256,
+            event_capacity: 256,
+            listen: None,
+            handshake_timeout: Duration::from_secs(10),
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{ops::ControlFlow, time::Duration};
+use std::{net::SocketAddr, ops::ControlFlow, time::Duration};
 
 use cobalt_format::World;
 use tokio::{
@@ -14,6 +14,8 @@ use crate::{
     error::{ServerError, ServerResult},
     event::Event,
     handle::ServerHandle,
+    log::debug_log,
+    net::Listener,
     status::Status,
 };
 
@@ -54,8 +56,13 @@ impl Server {
 
     pub fn spawn(world: World, config: ServerConfig) -> ServerResult<RunningServer> {
         let (server, handle) = Self::new(world, config)?;
+        let listener = config
+            .listen
+            .map(|addr| Listener::bind(addr, handle.clone(), config.handshake_timeout))
+            .transpose()?;
         let task = tokio::spawn(server.run());
-        Ok(RunningServer { handle, task })
+
+        Ok(RunningServer { handle, task, listener })
     }
 
     pub async fn run(mut self) {
@@ -123,6 +130,7 @@ impl Server {
                 let result = validate_tick_rate(rate);
                 if result.is_ok() {
                     self.config.tick_rate = rate;
+                    debug_log!("tick rate set to {rate}");
                 }
                 let _ = reply.send(result);
             }
@@ -147,6 +155,7 @@ impl Server {
     }
 
     fn emit(&self, event: Event) {
+        debug_log!("event: {event:?}");
         let _ = self.events.send(event);
     }
 }
@@ -154,6 +163,7 @@ impl Server {
 pub struct RunningServer {
     handle: ServerHandle,
     task: JoinHandle<()>,
+    listener: Option<Listener>,
 }
 
 impl RunningServer {
@@ -161,14 +171,25 @@ impl RunningServer {
         &self.handle
     }
 
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.listener.as_ref().map(Listener::local_addr)
+    }
+
     pub async fn join(self) -> Result<(), JoinError> {
-        let Self { handle, task } = self;
+        let Self { handle, task, listener } = self;
         drop(handle);
-        task.await
+        let result = task.await;
+        if let Some(listener) = listener {
+            listener.stop().await;
+        }
+        result
     }
 
     pub async fn shutdown(self) -> Result<(), JoinError> {
-        let Self { handle, task } = self;
+        let Self { handle, task, listener } = self;
+        if let Some(listener) = listener {
+            listener.stop().await;
+        }
         let _ = handle.shutdown().await;
         task.await
     }
@@ -285,6 +306,7 @@ mod tests {
             ServerConfig { max_players: 0, ..ServerConfig::default() },
             ServerConfig { command_capacity: 0, ..ServerConfig::default() },
             ServerConfig { event_capacity: 0, ..ServerConfig::default() },
+            ServerConfig { handshake_timeout: Duration::ZERO, ..ServerConfig::default() },
         ] {
             assert!(matches!(Server::new(world(), config), Err(ServerError::InvalidConfig(_))));
         }

@@ -8,7 +8,8 @@ pub struct StringPath {
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum ConsoleCommand {
-    Exit,
+    Status,
+    Tick { rate: u32 },
 }
 
 #[derive(Debug, Parser, Clone)]

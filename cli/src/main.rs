@@ -1,8 +1,15 @@
 use anyhow::Result;
+use clap::Parser;
 use inquire::InquireError;
-use std::path::Path;
+use std::{net::SocketAddr, path::Path};
 
 mod server;
+
+#[derive(Debug, Parser)]
+struct Args {
+    #[arg(short, long, default_value_t = 7777)]
+    port: u16,
+}
 
 #[derive(Debug, Clone)]
 enum WorldAction {
@@ -42,6 +49,7 @@ fn prompt_create_world() -> Result<String, InquireError> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let listen = SocketAddr::from(([0, 0, 0, 0], Args::parse().port));
     let mut worlds = vec![
         "/data/data/com.termux/files/home/Programs/TShock/Data/worlds/joaquinvincentdeveyra.wld".to_string()
     ];
@@ -53,7 +61,7 @@ async fn main() -> Result<()> {
         match prompt_world_menu(&worlds) {
             Ok(WorldAction::Select { name, path }) => {
                 println!("Loading world context '{}'...", name);
-                match server::new(path).await {
+                match server::new(path, listen).await {
                     Ok(console) => {
                         console_instance = Some(console);
                         break;

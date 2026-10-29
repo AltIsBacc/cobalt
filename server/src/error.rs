@@ -1,3 +1,5 @@
+use std::io;
+
 use thiserror::Error;
 
 use crate::client::ClientId;
@@ -17,4 +19,7 @@ pub enum ServerError {
 
     #[error("the server is no longer running")]
     Stopped,
+
+    #[error(transparent)]
+    Io(#[from] io::Error),
 }

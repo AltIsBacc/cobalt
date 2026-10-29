@@ -181,24 +181,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "cobalt-net"
-version = "0.1.0"
-dependencies = [
- "cobalt-format",
- "cobalt-server",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
 name = "cobalt-protocol"
 version = "0.1.0"
+dependencies = [
+ "num_enum",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "cobalt-server"
 version = "0.1.0"
 dependencies = [
  "cobalt-format",
+ "cobalt-protocol",
  "thiserror 2.0.18",
  "tokio",
 ]

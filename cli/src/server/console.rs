@@ -15,8 +15,16 @@ pub struct ServerConsole(RunningServer);
 
 impl ServerConsole {
     pub async fn start(self) -> Result<()> {
+        if let Some(addr) = self.local_addr() {
+            println!("Listening on {addr}");
+        }
+
+        let handle = self.handle().clone();
         let mut repl = Repl::<Cli>::new(Box::new(self), None, Some(">> ".to_string()))?;
-        repl.process().await
+        repl.process().await?;
+
+        handle.shutdown().await?;
+        Ok(())
     }
 }
 
@@ -27,15 +35,25 @@ impl Debug for ServerConsole {
 #[async_trait]
 impl ReplCommandProcessor<Cli> for ServerConsole {
     fn is_quit(&self, command: &str) -> bool {
-        matches!(command, "exit-nosave" | "q")
+        matches!(command, "exit" | "exit-nosave" | "q")
     }
 
     async fn process_command(&self, command: Cli) -> Result<()> {
         match command.command {
-            ConsoleCommand::Exit => {
-                
+            ConsoleCommand::Status => {
+                let status = self.handle().status().await?;
+                println!(
+                    "{}: {}/{} players, {} tps, {} ticks, up {:.0?}",
+                    status.world_name,
+                    status.players,
+                    status.max_players,
+                    status.tick_rate,
+                    status.ticks,
+                    status.uptime,
+                );
             }
-        };
+            ConsoleCommand::Tick { rate } => self.handle().set_tick_rate(rate).await?,
+        }
 
         Ok(())
     }

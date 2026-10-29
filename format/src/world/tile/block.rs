@@ -6,7 +6,6 @@ use crate::world::tile::paint::Paint;
 #[repr(u8)]
 pub enum BlockShape {
     #[default]
-    #[num_enum(default)]
     Normal = 0,
     HalfBrick = 1,
     SlopeBottomRight = 2,

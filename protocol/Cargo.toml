@@ -10,3 +10,5 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+num_enum.workspace = true
+thiserror.workspace = true

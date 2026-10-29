@@ -11,9 +11,10 @@ workspace = true
 
 [dependencies]
 cobalt-format.workspace = true
+cobalt-protocol.workspace = true
 
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+tokio = { workspace = true, features = ["net", "io-util", "sync", "rt", "time", "macros"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

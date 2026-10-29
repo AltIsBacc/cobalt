@@ -4,10 +4,13 @@ mod config;
 mod error;
 mod event;
 mod handle;
+mod log;
+mod net;
 mod server;
 mod status;
 
 pub use cobalt_format as format;
+pub use cobalt_protocol as protocol;
 
 pub use client::ClientId;
 pub use config::ServerConfig;
