@@ -1,0 +1,15 @@
+[package]
+name = "cobalt-net"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+cobalt-server.workspace = true
+cobalt-protocol.workspace = true
+
+derive_more.workspace = true
+
+tokio = { workspace = true, features = ["net", "io-util", "rt", "sync"] }
+uuid = { workspace = true, features = ["v4"] }
+
