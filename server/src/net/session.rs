@@ -1,6 +1,8 @@
 use std::{net::SocketAddr, time::Duration};
 
-use cobalt_protocol::{Frame, NetworkText, PROTOCOL_VERSION, Packet, ProtocolError};
+use cobalt_protocol::{
+    C2sPacket, Frame, Message, NetworkText, PROTOCOL_VERSION, ProtocolError, S2cPacket,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -8,8 +10,13 @@ use tokio::{
     time,
 };
 
-use super::error::{SessionError, SessionResult};
-use crate::{error::ServerError, handle::ServerHandle, log::debug_log};
+use super::{
+    error::{SessionError, SessionResult},
+    profile,
+};
+use crate::{
+    client::ClientId, error::ServerError, handle::ServerHandle, log::debug_log, player::Player,
+};
 
 const READ_CHUNK_LEN: usize = 4096;
 
@@ -58,7 +65,7 @@ pub(crate) async fn serve(
 
     tokio::select! {
         _ = shutdown.changed() => debug_log!("{peer} closed by shutdown"),
-        result = connection.run() => debug_log!("{peer} session ended: {result:?}"),
+        result = connection.run(id, &server, handshake_timeout) => debug_log!("{peer} session ended: {result:?}"),
     }
 
     let _ = server.leave(id).await;
@@ -80,8 +87,8 @@ impl Connection {
 
     async fn accept_connect(&mut self) -> SessionResult<bool> {
         match self.next_packet().await? {
-            Some(Packet::Connect { version }) if version == PROTOCOL_VERSION => Ok(true),
-            Some(Packet::Connect { version }) => {
+            Some(C2sPacket::Connect { version }) if version == PROTOCOL_VERSION => Ok(true),
+            Some(C2sPacket::Connect { version }) => {
                 self.refuse(&format!("incompatible client version: {version}")).await?;
                 Ok(false)
             }
@@ -89,19 +96,44 @@ impl Connection {
         }
     }
 
-    async fn run(&mut self) -> SessionResult {
-        match self.next_packet().await? {
-            Some(packet) => Err(SessionError::UnexpectedPacket(packet.message_type())),
-            None => Ok(()),
+    async fn run(
+        &mut self,
+        id: ClientId,
+        server: &ServerHandle,
+        timeout: Duration,
+    ) -> SessionResult {
+        self.send(&S2cPacket::SetUserSlot { player_id: id.get() }).await?;
+
+        let collected = time::timeout(timeout, self.collect_player())
+            .await
+            .map_err(|_| SessionError::HandshakeTimeout)??;
+        let Some(player) = collected else { return Ok(()) };
+
+        if !player.has_valid_name() {
+            return self.refuse("invalid player name").await;
+        }
+
+        server.login(id, player).await?;
+        self.refuse("world data is not available yet").await
+    }
+
+    async fn collect_player(&mut self) -> SessionResult<Option<Player>> {
+        let mut player = Player::default();
+        loop {
+            match self.next_packet().await? {
+                None => return Ok(None),
+                Some(C2sPacket::RequestWorldData) => return Ok(Some(player)),
+                Some(packet) => profile::absorb(&mut player, packet)?,
+            }
         }
     }
 
     async fn refuse(&mut self, reason: &str) -> SessionResult {
         debug_log!("{} refused: {reason}", self.peer);
-        self.send(&Packet::Disconnect { reason: NetworkText::literal(reason) }).await
+        self.send(&S2cPacket::Disconnect { reason: NetworkText::literal(reason) }).await
     }
 
-    async fn send(&mut self, packet: &Packet) -> SessionResult {
+    async fn send(&mut self, packet: &S2cPacket) -> SessionResult {
         debug_log!("{} -> {packet:?}", self.peer);
         self.outbound.clear();
         packet.encode(&mut self.outbound)?;
@@ -109,7 +141,7 @@ impl Connection {
         Ok(())
     }
 
-    async fn next_packet(&mut self) -> SessionResult<Option<Packet>> {
+    async fn next_packet(&mut self) -> SessionResult<Option<C2sPacket>> {
         loop {
             if let Some(packet) = self.decode_buffered()? {
                 return Ok(Some(packet));
@@ -124,10 +156,10 @@ impl Connection {
         }
     }
 
-    fn decode_buffered(&mut self) -> SessionResult<Option<Packet>> {
+    fn decode_buffered(&mut self) -> SessionResult<Option<C2sPacket>> {
         while let Some((frame, used)) = Frame::parse(&self.inbound[self.consumed..])? {
             self.consumed += used;
-            match Packet::decode(frame) {
+            match C2sPacket::decode(frame) {
                 Ok(packet) => {
                     debug_log!("{} <- {packet:?}", self.peer);
                     return Ok(Some(packet));

@@ -5,6 +5,7 @@ use crate::{
     command::Command,
     error::{ServerError, ServerResult},
     event::{Event, Events},
+    player::Player,
     status::Status,
 };
 
@@ -28,6 +29,10 @@ impl ServerHandle {
 
     pub async fn join(&self) -> ServerResult<ClientId> {
         self.request(|reply| Command::Join { reply }).await?
+    }
+
+    pub async fn login(&self, id: ClientId, player: Player) -> ServerResult {
+        self.request(|reply| Command::Login { id, player, reply }).await?
     }
 
     pub async fn leave(&self, id: ClientId) -> ServerResult {

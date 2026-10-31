@@ -3,19 +3,12 @@ use num_enum::{IntoPrimitive, TryFromPrimitive};
 use crate::{
     codec::{Reader, Writer},
     error::{ProtocolError, ProtocolResult},
-    frame::{self, Frame},
+    field::Field,
 };
 
 pub const PROTOCOL_VERSION: &str = "Terraria326";
 
 const MAX_TEXT_DEPTH: u8 = 4;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
-#[repr(u8)]
-pub enum MessageType {
-    Connect = 1,
-    Disconnect = 2,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
 #[repr(u8)]
@@ -93,64 +86,42 @@ impl NetworkText {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Packet {
-    Connect { version: String },
-    Disconnect { reason: NetworkText },
-}
-
-impl Packet {
-    pub const fn message_type(&self) -> MessageType {
-        match self {
-            Self::Connect { .. } => MessageType::Connect,
-            Self::Disconnect { .. } => MessageType::Disconnect,
-        }
+impl Field for NetworkText {
+    fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self> {
+        Self::read(reader, 0)
     }
 
-    pub fn decode(frame: Frame<'_>) -> ProtocolResult<Self> {
-        let kind = MessageType::try_from(frame.kind)
-            .map_err(|e| ProtocolError::UnknownMessage(e.number))?;
-        let mut reader = Reader::new(frame.payload);
-
-        Ok(match kind {
-            MessageType::Connect => Self::Connect { version: reader.string()?.to_owned() },
-            MessageType::Disconnect => {
-                Self::Disconnect { reason: NetworkText::read(&mut reader, 0)? }
-            }
-        })
-    }
-
-    pub fn encode(&self, out: &mut Vec<u8>) -> ProtocolResult {
-        frame::encode(self.message_type().into(), out, |writer| match self {
-            Self::Connect { version } => writer.string(version),
-            Self::Disconnect { reason } => reason.write(writer),
-        })
+    fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
+        self.write(writer)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::fmt::Debug;
 
-    fn round_trip(packet: &Packet) -> Vec<u8> {
+    use super::*;
+    use crate::{C2sPacket, Frame, Message, S2cPacket};
+
+    fn round_trip<P: Message + PartialEq + Debug>(packet: &P) -> Vec<u8> {
         let mut out = Vec::new();
         packet.encode(&mut out).unwrap();
         let (frame, used) = Frame::parse(&out).unwrap().unwrap();
         assert_eq!(used, out.len());
-        assert_eq!(&Packet::decode(frame).unwrap(), packet);
+        assert_eq!(&P::decode(frame).unwrap(), packet);
         out
     }
 
     #[test]
     fn connect_round_trips() {
-        let out = round_trip(&Packet::Connect { version: PROTOCOL_VERSION.to_owned() });
+        let out = round_trip(&C2sPacket::Connect { version: PROTOCOL_VERSION.to_owned() });
         assert_eq!(out.len(), 15);
         assert_eq!(&out[..4], &[15, 0, 1, 11]);
     }
 
     #[test]
     fn literal_disconnect_matches_the_wire_format() {
-        let out = round_trip(&Packet::Disconnect { reason: NetworkText::literal("full") });
+        let out = round_trip(&S2cPacket::Disconnect { reason: NetworkText::literal("full") });
         assert_eq!(out, [9, 0, 2, 0, 4, b'f', b'u', b'l', b'l']);
     }
 
@@ -166,25 +137,25 @@ mod tests {
                 },
             ],
         };
-        round_trip(&Packet::Disconnect { reason });
+        round_trip(&S2cPacket::Disconnect { reason });
     }
 
     #[test]
     fn unknown_messages_are_reported() {
         let frame = Frame { kind: 200, payload: &[] };
-        assert!(matches!(Packet::decode(frame), Err(ProtocolError::UnknownMessage(200))));
+        assert!(matches!(C2sPacket::decode(frame), Err(ProtocolError::UnknownMessage(200))));
     }
 
     #[test]
     fn truncated_payloads_are_rejected() {
         let frame = Frame { kind: 1, payload: &[11, b'T'] };
-        assert!(matches!(Packet::decode(frame), Err(ProtocolError::UnexpectedEof)));
+        assert!(matches!(C2sPacket::decode(frame), Err(ProtocolError::UnexpectedEof)));
     }
 
     #[test]
     fn unknown_text_modes_are_rejected() {
         let frame = Frame { kind: 2, payload: &[9, 0] };
-        assert!(matches!(Packet::decode(frame), Err(ProtocolError::UnknownTextMode(9))));
+        assert!(matches!(S2cPacket::decode(frame), Err(ProtocolError::UnknownTextMode(9))));
     }
 
     #[test]
@@ -192,7 +163,7 @@ mod tests {
         let mut payload: Vec<u8> = [1, 0, 1].repeat(usize::from(MAX_TEXT_DEPTH) + 2);
         payload.extend([0, 0]);
         let frame = Frame { kind: 2, payload: &payload };
-        assert!(matches!(Packet::decode(frame), Err(ProtocolError::TextTooDeep)));
+        assert!(matches!(S2cPacket::decode(frame), Err(ProtocolError::TextTooDeep)));
     }
 
     #[test]
@@ -203,7 +174,7 @@ mod tests {
         };
         let mut out = Vec::new();
         assert!(matches!(
-            Packet::Disconnect { reason }.encode(&mut out),
+            S2cPacket::Disconnect { reason }.encode(&mut out),
             Err(ProtocolError::TooManySubstitutions(256))
         ));
         assert!(out.is_empty());

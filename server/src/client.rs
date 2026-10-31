@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::player::Player;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClientId(u8);
 
@@ -18,12 +20,17 @@ impl fmt::Display for ClientId {
 #[derive(Debug)]
 pub(crate) struct Clients {
     used: Box<[bool]>,
+    players: Box<[Option<Player>]>,
     count: usize,
 }
 
 impl Clients {
     pub(crate) fn new(capacity: u8) -> Self {
-        Self { used: vec![false; usize::from(capacity)].into_boxed_slice(), count: 0 }
+        Self {
+            used: vec![false; usize::from(capacity)].into_boxed_slice(),
+            players: (0..capacity).map(|_| None).collect(),
+            count: 0,
+        }
     }
 
     pub(crate) const fn count(&self) -> usize {
@@ -42,10 +49,23 @@ impl Clients {
         Some(id)
     }
 
+    pub(crate) fn set_player(&mut self, id: ClientId, player: Player) -> bool {
+        let index = usize::from(id.0);
+        match self.players.get_mut(index) {
+            Some(slot) if self.used[index] => {
+                *slot = Some(player);
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn remove(&mut self, id: ClientId) -> bool {
-        match self.used.get_mut(usize::from(id.0)) {
+        let index = usize::from(id.0);
+        match self.used.get_mut(index) {
             Some(slot) if *slot => {
                 *slot = false;
+                self.players[index] = None;
                 self.count -= 1;
                 true
             }

@@ -1,4 +1,5 @@
 mod error;
+mod profile;
 mod session;
 
 use std::{net::SocketAddr, time::Duration};
@@ -87,7 +88,7 @@ mod tests {
         World,
         world::header::{Difficulty, Size},
     };
-    use cobalt_protocol::{Frame, NetworkText, PROTOCOL_VERSION, Packet};
+    use cobalt_protocol::{C2sPacket, Frame, Message, NetworkText, PROTOCOL_VERSION, S2cPacket};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpStream,
@@ -112,14 +113,14 @@ mod tests {
         Server::spawn(world, listening(config)).unwrap()
     }
 
-    fn encode(packet: &Packet) -> Vec<u8> {
+    fn encode(packet: &C2sPacket) -> Vec<u8> {
         let mut out = Vec::new();
         packet.encode(&mut out).unwrap();
         out
     }
 
     fn connect_bytes() -> Vec<u8> {
-        encode(&Packet::Connect { version: PROTOCOL_VERSION.to_owned() })
+        encode(&C2sPacket::Connect { version: PROTOCOL_VERSION.to_owned() })
     }
 
     async fn dial(running: &RunningServer) -> TcpStream {
@@ -132,12 +133,12 @@ mod tests {
         stream
     }
 
-    async fn read_packet(stream: &mut TcpStream) -> Option<Packet> {
+    async fn read_packet(stream: &mut TcpStream) -> Option<S2cPacket> {
         time::timeout(TIMEOUT, async {
             let mut buffer = Vec::new();
             loop {
                 if let Some((frame, _)) = Frame::parse(&buffer).unwrap() {
-                    return Some(Packet::decode(frame).unwrap());
+                    return Some(S2cPacket::decode(frame).unwrap());
                 }
                 match stream.read_buf(&mut buffer).await {
                     Ok(0) | Err(_) => return None,
@@ -147,6 +148,10 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    async fn assert_closed(stream: &mut TcpStream) {
+        while read_packet(stream).await.is_some() {}
     }
 
     async fn wait_for_players(server: &ServerHandle, expected: usize) {
@@ -159,8 +164,8 @@ mod tests {
         .unwrap();
     }
 
-    fn disconnect(reason: &str) -> Option<Packet> {
-        Some(Packet::Disconnect { reason: NetworkText::literal(reason) })
+    fn disconnect(reason: &str) -> Option<S2cPacket> {
+        Some(S2cPacket::Disconnect { reason: NetworkText::literal(reason) })
     }
 
     #[tokio::test]
@@ -215,7 +220,7 @@ mod tests {
         let running = start(ServerConfig::default());
 
         let mut stream = dial(&running).await;
-        let bytes = encode(&Packet::Connect { version: "Terraria1".to_owned() });
+        let bytes = encode(&C2sPacket::Connect { version: "Terraria1".to_owned() });
         stream.write_all(&bytes).await.unwrap();
 
         assert_eq!(read_packet(&mut stream).await, disconnect("incompatible client version"));
@@ -252,7 +257,7 @@ mod tests {
         assert!(matches!(events.recv().await.unwrap(), Event::ClientJoined { .. }));
         assert!(matches!(events.recv().await.unwrap(), Event::ClientLeft { .. }));
         assert_eq!(events.recv().await.unwrap(), Event::Stopped);
-        assert_eq!(read_packet(&mut stream).await, None);
+        assert_closed(&mut stream).await;
     }
 
     #[tokio::test]
@@ -266,7 +271,7 @@ mod tests {
         handle.shutdown().await.unwrap();
         running.join().await.unwrap();
 
-        assert_eq!(read_packet(&mut stream).await, None);
+        assert_closed(&mut stream).await;
     }
 
     #[tokio::test]

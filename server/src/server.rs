@@ -114,6 +114,15 @@ impl Server {
                 }
                 let _ = reply.send(result);
             }
+            Command::Login { id, player, reply } => {
+                let result = if self.clients.set_player(id, player) {
+                    self.emit(Event::ClientLoggedIn { id });
+                    Ok(())
+                } else {
+                    Err(ServerError::UnknownClient(id))
+                };
+                let _ = reply.send(result);
+            }
             Command::Leave { id, reply } => {
                 let result = if self.clients.remove(id) {
                     self.emit(Event::ClientLeft { id });

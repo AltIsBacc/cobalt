@@ -14,6 +14,10 @@ impl<'a> Reader<'a> {
         Ok(self.take(1)?[0])
     }
 
+    pub fn array<const N: usize>(&mut self) -> ProtocolResult<[u8; N]> {
+        self.take(N)?.first_chunk().copied().ok_or(ProtocolError::UnexpectedEof)
+    }
+
     pub fn uleb128(&mut self) -> ProtocolResult<u32> {
         let mut value = 0u32;
         for shift in (0u32..35).step_by(7) {
@@ -54,6 +58,10 @@ impl<'a> Writer<'a> {
 
     pub fn u8(&mut self, value: u8) {
         self.out.push(value);
+    }
+
+    pub fn raw(&mut self, bytes: &[u8]) {
+        self.out.extend_from_slice(bytes);
     }
 
     pub fn uleb128(&mut self, mut value: u32) {

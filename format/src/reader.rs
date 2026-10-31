@@ -64,7 +64,40 @@ impl<'a> Reader<'a> {
         u16 => u16,
         i16 => i16,
         i32 => i32,
+        i64 => i64,
         u64 => u64,
+        f32 => f32,
+        f64 => f64,
+    }
+
+    pub fn bool(&mut self) -> Result<bool> {
+        Ok(self.u8()? != 0)
+    }
+
+    pub fn i32s<const N: usize>(&mut self) -> Result<[i32; N]> {
+        let mut out = [0; N];
+        for value in &mut out {
+            *value = self.i32()?;
+        }
+        Ok(out)
+    }
+
+    pub fn count_i16(&mut self) -> Result<usize> {
+        let raw = self.i16()?;
+        usize::try_from(raw).map_err(|_| Error::NegativeCount(i32::from(raw)))
+    }
+
+    pub fn count_i32(&mut self) -> Result<usize> {
+        let raw = self.i32()?;
+        usize::try_from(raw).map_err(|_| Error::NegativeCount(raw))
+    }
+
+    pub fn repeat<T>(
+        &mut self,
+        count: usize,
+        mut read: impl FnMut(&mut Self) -> Result<T>,
+    ) -> Result<Vec<T>> {
+        (0..count).map(|_| read(self)).collect()
     }
 
     pub fn uleb128_u32(&mut self) -> Result<u32> {

@@ -38,6 +38,18 @@ pub enum Error {
     #[error("section pointer {0} is negative")]
     NegativeSection(i32),
 
+    #[error("negative element count {0}")]
+    NegativeCount(i32),
+
+    #[error("{section} section ends at {found}, expected {expected}")]
+    SectionMismatch { section: &'static str, expected: usize, found: usize },
+
+    #[error("unknown tile entity type {0}")]
+    UnknownTileEntity(u8),
+
+    #[error("world footer does not match the header")]
+    InvalidFooter,
+
     #[error("world name is {len} bytes long, the maximum is {max}")]
     NameTooLong { len: usize, max: usize },
 

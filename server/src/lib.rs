@@ -6,6 +6,7 @@ mod event;
 mod handle;
 mod log;
 mod net;
+mod player;
 mod server;
 mod status;
 
@@ -17,5 +18,6 @@ pub use config::ServerConfig;
 pub use error::{ServerError, ServerResult};
 pub use event::{Event, Events};
 pub use handle::ServerHandle;
+pub use player::{Item, Player};
 pub use server::{RunningServer, Server};
 pub use status::Status;
