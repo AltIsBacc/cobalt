@@ -1,13 +1,11 @@
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::{
-    client::ClientId,
-    command::Command,
-    error::{ServerError, ServerResult},
-    event::{Event, Events},
-    player::Player,
-    status::Status,
-};
+use crate::client::ClientId;
+use crate::command::Command;
+use crate::error::{ServerError, ServerResult};
+use crate::event::{Event, Events};
+use crate::player::Player;
+use crate::status::Status;
 
 #[derive(Debug, Clone)]
 pub struct ServerHandle {
@@ -23,6 +21,7 @@ impl ServerHandle {
         Self { commands, events }
     }
 
+    #[must_use]
     pub fn subscribe(&self) -> Events {
         self.events.subscribe()
     }

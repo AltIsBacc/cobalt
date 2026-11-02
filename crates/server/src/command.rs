@@ -1,6 +1,9 @@
 use tokio::sync::oneshot;
 
-use crate::{client::ClientId, error::ServerResult, player::Player, status::Status};
+use crate::client::ClientId;
+use crate::error::ServerResult;
+use crate::player::Player;
+use crate::status::Status;
 
 pub(crate) enum Command {
     Join { reply: oneshot::Sender<ServerResult<ClientId>> },

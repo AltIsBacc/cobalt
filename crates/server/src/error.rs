@@ -7,6 +7,7 @@ use crate::client::ClientId;
 pub type ServerResult<T = ()> = Result<T, ServerError>;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ServerError {
     #[error("invalid configuration: {0}")]
     InvalidConfig(&'static str),

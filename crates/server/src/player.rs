@@ -21,6 +21,7 @@ impl Player {
     pub const MAX_NAME_LEN: usize = 20;
     pub const INVENTORY_SLOTS: usize = 260;
 
+    #[must_use]
     pub fn has_valid_name(&self) -> bool {
         let len = self.name.chars().count();
         (1..=Self::MAX_NAME_LEN).contains(&len) && !self.name.trim().is_empty()

@@ -1,22 +1,18 @@
-use std::{net::SocketAddr, time::Duration};
+use std::net::SocketAddr;
+use std::time::Duration;
 
-use cobalt_protocol::{
-    C2sPacket, Frame, Message, NetworkText, PROTOCOL_VERSION, ProtocolError, S2cPacket,
-};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-    sync::watch,
-    time,
-};
+use cobalt_protocol::{C2sPacket, Frame, NetworkText, PROTOCOL_VERSION, ProtocolError, S2cPacket};
+use tokio::net::TcpStream;
+use tokio::sync::watch;
+use tokio::time;
 
-use super::{
-    error::{SessionError, SessionResult},
-    profile,
-};
-use crate::{
-    client::ClientId, error::ServerError, handle::ServerHandle, log::debug_log, player::Player,
-};
+use super::error::{SessionError, SessionResult};
+use super::profile;
+use crate::client::ClientId;
+use crate::error::ServerError;
+use crate::handle::ServerHandle;
+use crate::log::debug_log;
+use crate::player::Player;
 
 const READ_CHUNK_LEN: usize = 4096;
 
@@ -65,7 +61,9 @@ pub(crate) async fn serve(
 
     tokio::select! {
         _ = shutdown.changed() => debug_log!("{peer} closed by shutdown"),
-        result = connection.run(id, &server, handshake_timeout) => debug_log!("{peer} session ended: {result:?}"),
+        result = connection.run(id, &server, handshake_timeout) => {
+            debug_log!("{peer} session ended: {result:?}");
+        }
     }
 
     let _ = server.leave(id).await;
@@ -134,6 +132,9 @@ impl Connection {
     }
 
     async fn send(&mut self, packet: &S2cPacket) -> SessionResult {
+        use cobalt_protocol::Message;
+        use tokio::io::AsyncWriteExt;
+
         debug_log!("{} -> {packet:?}", self.peer);
         self.outbound.clear();
         packet.encode(&mut self.outbound)?;
@@ -142,6 +143,8 @@ impl Connection {
     }
 
     async fn next_packet(&mut self) -> SessionResult<Option<C2sPacket>> {
+        use tokio::io::AsyncReadExt;
+
         loop {
             if let Some(packet) = self.decode_buffered()? {
                 return Ok(Some(packet));
@@ -157,6 +160,8 @@ impl Connection {
     }
 
     fn decode_buffered(&mut self) -> SessionResult<Option<C2sPacket>> {
+        use cobalt_protocol::Message;
+
         while let Some((frame, used)) = Frame::parse(&self.inbound[self.consumed..])? {
             self.consumed += used;
             match C2sPacket::decode(frame) {

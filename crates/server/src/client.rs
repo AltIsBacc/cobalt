@@ -6,6 +6,7 @@ use crate::player::Player;
 pub struct ClientId(u8);
 
 impl ClientId {
+    #[must_use]
     pub const fn get(self) -> u8 {
         self.0
     }

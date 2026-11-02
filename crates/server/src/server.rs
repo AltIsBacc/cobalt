@@ -1,23 +1,21 @@
-use std::{net::SocketAddr, ops::ControlFlow, time::Duration};
+use std::net::SocketAddr;
+use std::ops::ControlFlow;
+use std::time::Duration;
 
 use cobalt_format::World;
-use tokio::{
-    sync::{broadcast, mpsc},
-    task::{JoinError, JoinHandle},
-    time::{self, Instant, Interval, MissedTickBehavior},
-};
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::{JoinError, JoinHandle};
+use tokio::time::{self, Instant, Interval, MissedTickBehavior};
 
-use crate::{
-    client::Clients,
-    command::Command,
-    config::{ServerConfig, validate_tick_rate},
-    error::{ServerError, ServerResult},
-    event::Event,
-    handle::ServerHandle,
-    log::debug_log,
-    net::Listener,
-    status::Status,
-};
+use crate::client::Clients;
+use crate::command::Command;
+use crate::config::{self, ServerConfig};
+use crate::error::{ServerError, ServerResult};
+use crate::event::Event;
+use crate::handle::ServerHandle;
+use crate::log::debug_log;
+use crate::net::Listener;
+use crate::status::Status;
 
 enum Wake {
     Tick,
@@ -35,7 +33,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(world: World, config: ServerConfig) -> ServerResult<(Self, ServerHandle)> {
+    pub fn try_new(world: World, config: ServerConfig) -> ServerResult<(Self, ServerHandle)> {
         config.validate()?;
 
         let (commands_tx, commands_rx) = mpsc::channel(config.command_capacity);
@@ -55,7 +53,7 @@ impl Server {
     }
 
     pub fn spawn(world: World, config: ServerConfig) -> ServerResult<RunningServer> {
-        let (server, handle) = Self::new(world, config)?;
+        let (server, handle) = Self::try_new(world, config)?;
         let listener = config
             .listen
             .map(|addr| Listener::bind(addr, handle.clone(), config.handshake_timeout))
@@ -136,7 +134,7 @@ impl Server {
                 let _ = reply.send(self.status());
             }
             Command::SetTickRate { rate, reply } => {
-                let result = validate_tick_rate(rate);
+                let result = config::validate_tick_rate(rate);
                 if result.is_ok() {
                     self.config.tick_rate = rate;
                     debug_log!("tick rate set to {rate}");
@@ -176,10 +174,12 @@ pub struct RunningServer {
 }
 
 impl RunningServer {
+    #[must_use]
     pub const fn handle(&self) -> &ServerHandle {
         &self.handle
     }
 
+    #[must_use]
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.listener.as_ref().map(Listener::local_addr)
     }
@@ -317,7 +317,7 @@ mod tests {
             ServerConfig { event_capacity: 0, ..ServerConfig::default() },
             ServerConfig { handshake_timeout: Duration::ZERO, ..ServerConfig::default() },
         ] {
-            assert!(matches!(Server::new(world(), config), Err(ServerError::InvalidConfig(_))));
+            assert!(matches!(Server::try_new(world(), config), Err(ServerError::InvalidConfig(_))));
         }
     }
 }
