@@ -17,4 +17,3 @@ pub struct Cli {
     #[clap(subcommand)]
     pub command: ConsoleCommand,
 }
-

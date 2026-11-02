@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ impl ServerConsole {
         }
 
         let handle = self.handle().clone();
-        let mut repl = Repl::<Cli>::new(Box::new(self), None, Some(">> ".to_string()))?;
+        let mut repl = Repl::<Cli>::new(Box::new(self), None, Some(">> ".to_owned()))?;
         repl.process().await?;
 
         handle.shutdown().await?;
@@ -28,8 +28,10 @@ impl ServerConsole {
     }
 }
 
-impl Debug for ServerConsole {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Ok(()) }
+impl fmt::Debug for ServerConsole {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -58,4 +60,3 @@ impl ReplCommandProcessor<Cli> for ServerConsole {
         Ok(())
     }
 }
-

@@ -1,4 +1,5 @@
-use std::{net::SocketAddr, path::Path};
+use std::net::SocketAddr;
+use std::path::Path;
 
 use anyhow::Result;
 use cobalt_format::World;
