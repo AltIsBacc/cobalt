@@ -1,50 +1,35 @@
+mod chat;
+mod chest;
 mod clock;
+mod dispatch;
 mod error;
 mod outbox;
+mod presence;
 mod section;
+mod sign;
 mod slots;
 mod stage;
+mod tiles;
 mod world_info;
 
 use std::mem;
 use std::time::Duration;
 
 use cobalt_format::World;
-use cobalt_protocol::registry::{
-    Disconnect, FinishedConnectingToServer, PlayerActive, PlayerControls, PlayerHp, PlayerInfo,
-    PlayerInventorySlot, PlayerMana, PlayerTeam, RequestEssentialTiles, SetUserSlot, SpawnPlayer,
-    UpdatePlayerBuff,
-};
-use cobalt_protocol::{
-    Frame, Frames, HEADER_LEN, NetworkText, Packet, ProtocolError, ProtocolResult, S2c,
-};
+use cobalt_protocol::registry::{PlayerActive, SetUserSlot};
+use cobalt_protocol::{ProtocolError, ProtocolResult};
 
 use self::clock::Clock;
-use self::error::ClientError;
 pub(crate) use self::outbox::Outbox;
 use self::slots::Slots;
-use self::stage::{Absorbed, Authenticating, Stage, remember};
-use self::world_info::narrow;
-use crate::client::ClientId;
+use self::stage::{Authenticating, Stage};
 use crate::config::{self, ServerConfig};
 use crate::error::ServerResult;
-use crate::event::Event;
 use crate::log::debug_log;
-use crate::player::{Item, Player};
-use crate::status::Status;
+use crate::model::{ClientId, Event, Status};
 
 const SHUTTING_DOWN: &str = "the server is shutting down";
 const FULL: &str = "the server is full";
-const RELAYED: [u8; 8] = [
-    PlayerInfo::ID,
-    PlayerInventorySlot::ID,
-    SpawnPlayer::ID,
-    PlayerControls::ID,
-    PlayerHp::ID,
-    PlayerMana::ID,
-    PlayerTeam::ID,
-    UpdatePlayerBuff::ID,
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Admission {
@@ -140,117 +125,6 @@ impl Engine {
         })
     }
 
-    pub(crate) fn receive(
-        &mut self,
-        id: ClientId,
-        bytes: &[u8],
-        out: &mut Outbox,
-    ) -> Result<Flow, ClientError> {
-        for frame in Frames::new(bytes) {
-            if self.dispatch(id, frame?, out)? == Flow::Close {
-                return Ok(Flow::Close);
-            }
-        }
-        Ok(Flow::Open)
-    }
-
-    fn dispatch(
-        &mut self,
-        id: ClientId,
-        frame: Frame<'_>,
-        out: &mut Outbox,
-    ) -> Result<Flow, ClientError> {
-        debug_log!("[cid {id}] {} : {:?}", frame.kind, frame.payload);
-        let Some(stage) = self.slots.get_mut(id) else { return Ok(Flow::Close) };
-
-        match mem::replace(stage, Stage::Closing) {
-            Stage::Authenticating(mut authenticating) => match authenticating.absorb(frame)? {
-                Absorbed::Pending => {
-                    *stage = Stage::Authenticating(authenticating);
-                    Ok(Flow::Open)
-                }
-                Absorbed::Complete => match authenticating.finish() {
-                    Ok(player) => {
-                        debug_log!("{id} logged in as {}", player.name);
-                        out.emit(Event::ClientLoggedIn { id });
-                        out.send(id, world_info::build(&self.world).into())?;
-                        *stage = Stage::Loading(player);
-                        Ok(Flow::Open)
-                    }
-                    Err(reason) => {
-                        out.send(id, refusal(reason).into())?;
-                        Ok(Flow::Close)
-                    }
-                },
-            },
-            Stage::Loading(player) => {
-                if frame.kind != RequestEssentialTiles::ID {
-                    *stage = Stage::Loading(player);
-                    return Ok(Flow::Open);
-                }
-                section::send_spawn(&self.world, id, out)?;
-                *stage = Stage::Spawning(player);
-                Ok(Flow::Open)
-            }
-            Stage::Spawning(player) => {
-                if frame.kind != SpawnPlayer::ID {
-                    *stage = Stage::Spawning(player);
-                    return Ok(Flow::Open);
-                }
-                *stage = Stage::Playing(player);
-                self.admit(id, frame, out)?;
-                Ok(Flow::Open)
-            }
-            Stage::Playing(mut player) => {
-                remember(&mut player, frame)?;
-                *stage = Stage::Playing(player);
-                if RELAYED.contains(&frame.kind) {
-                    self.relay(&attributed(frame, id)?, Some(id), out);
-                }
-                Ok(Flow::Open)
-            }
-            Stage::Closing => Ok(Flow::Close),
-        }
-    }
-
-    fn admit(&self, id: ClientId, spawn: Frame<'_>, out: &mut Outbox) -> Result<(), ClientError> {
-        let Some(Stage::Playing(joiner)) = self.slots.get(id) else { return Ok(()) };
-
-        for (other, player) in self.playing().filter(|&(other, _)| other != id) {
-            describe(other, player, id, out)?;
-        }
-        out.send(id, self.clock.packet().into())?;
-        out.send(id, FinishedConnectingToServer {}.into())?;
-
-        let spawned = attributed(spawn, id)?;
-        for (other, _) in self.playing().filter(|&(other, _)| other != id) {
-            describe(id, joiner, other, out)?;
-            out.relay(other, &spawned);
-        }
-        Ok(())
-    }
-
-    fn playing(&self) -> impl Iterator<Item = (ClientId, &Player)> {
-        self.slots.iter().filter_map(|(id, stage)| match stage {
-            Stage::Playing(player) => Some((id, player)),
-            _ => None,
-        })
-    }
-
-    fn relay(&self, bytes: &[u8], except: Option<ClientId>, out: &mut Outbox) {
-        for (to, _) in self.playing().filter(|&(to, _)| Some(to) != except) {
-            out.relay(to, bytes);
-        }
-    }
-
-    fn broadcast(&self, packet: S2c<'_>, except: Option<ClientId>, out: &mut Outbox) {
-        let mut bytes = Vec::new();
-        match packet.write(&mut bytes) {
-            Ok(()) => self.relay(&bytes, except, out),
-            Err(error) => debug_log!("broadcast failed: {error}"),
-        }
-    }
-
     pub(crate) fn release(&mut self, id: ClientId, out: &mut Outbox) {
         let Some(stage) = self.slots.remove(id) else { return };
         if matches!(stage, Stage::Playing(_)) {
@@ -258,51 +132,6 @@ impl Engine {
         }
         out.emit(Event::ClientLeft { id });
     }
-}
-
-fn attributed(frame: Frame<'_>, from: ClientId) -> ProtocolResult<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(HEADER_LEN + frame.payload.len());
-    frame.write(&mut bytes)?;
-    if let Some(owner) = bytes.get_mut(HEADER_LEN) {
-        *owner = from.get();
-    }
-    Ok(bytes)
-}
-
-fn describe(
-    owner: ClientId,
-    player: &Player,
-    to: ClientId,
-    out: &mut Outbox,
-) -> Result<(), ClientError> {
-    let player_id = owner.get();
-
-    out.send(to, PlayerActive { player_id, active: 1 }.into())?;
-    if !player.appearance.is_empty() {
-        let info = Frame { kind: PlayerInfo::ID, payload: &player.appearance };
-        out.relay(to, &attributed(info, owner)?);
-    }
-    out.send(to, PlayerHp { player_id, hp: player.hp, max_hp: player.max_hp }.into())?;
-    out.send(to, PlayerMana { player_id, mana: player.mana, max_mana: player.max_mana }.into())?;
-    out.send(to, PlayerTeam { player_id, team: player.team }.into())?;
-    out.send(to, UpdatePlayerBuff { player_id, buffs: player.buffs }.into())?;
-
-    let held = player.inventory.iter().enumerate().filter(|(_, item)| **item != Item::default());
-    for (slot, item) in held {
-        let slot = PlayerInventorySlot {
-            player_id,
-            slot: narrow(slot),
-            stack: item.stack,
-            prefix: item.prefix,
-            item_net_id: item.net_id,
-        };
-        out.send(to, slot.into())?;
-    }
-    Ok(())
-}
-
-fn refusal(reason: &'static str) -> Disconnect<'static> {
-    Disconnect { reason: NetworkText::Literal(reason) }
 }
 
 #[cfg(test)]

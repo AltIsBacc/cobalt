@@ -1,6 +1,6 @@
 use tokio::sync::broadcast;
 
-use crate::client::ClientId;
+use super::ClientId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

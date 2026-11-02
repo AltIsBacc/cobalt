@@ -1,4 +1,4 @@
-use crate::client::ClientId;
+use crate::model::ClientId;
 
 #[derive(Debug)]
 pub(crate) struct Slots<T> {

@@ -1,6 +1,7 @@
 #[macro_use]
 mod macros;
 
+pub mod module;
 pub mod registry;
 
 mod codec;
@@ -13,7 +14,8 @@ mod text;
 pub use codec::{Reader, Writer};
 pub use error::{ProtocolError, ProtocolResult};
 pub use field::{
-    Buff, BuffList, Color, Decode, Encode, MAX_BUFFS, Remainder, SpawnPoint, SpawnPoints,
+    Buff, BuffList, ChestName, Color, Decode, Encode, MAX_BUFFS, Remainder, SpawnPoint,
+    SpawnPoints,
 };
 pub use frame::{Frame, Frames, HEADER_LEN};
 pub use packet::{PROTOCOL_VERSION, Packet};

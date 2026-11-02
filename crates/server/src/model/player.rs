@@ -19,6 +19,7 @@ pub struct Player {
     pub team: u8,
     pub appearance: Vec<u8>,
     pub inventory: Box<[Item]>,
+    pub chest: Option<usize>,
 }
 
 impl Player {
@@ -45,6 +46,7 @@ impl Default for Player {
             team: 0,
             appearance: Vec::new(),
             inventory: vec![Item::default(); Self::INVENTORY_SLOTS].into_boxed_slice(),
+            chest: None,
         }
     }
 }

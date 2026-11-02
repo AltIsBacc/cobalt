@@ -1,8 +1,7 @@
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::error::{ServerError, ServerResult};
-use crate::event::{Event, Events};
-use crate::status::Status;
+use crate::model::{Event, Events, Status};
 
 pub(crate) enum Control {
     Status(oneshot::Sender<ServerResult<Status>>),

@@ -125,6 +125,38 @@ impl Encode for Buff {
     }
 }
 
+const MAX_CHEST_NAME_LEN: u8 = 20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChestName<'data>(pub Option<&'data str>);
+
+impl<'data> Decode<'data> for ChestName<'data> {
+    fn decode(reader: &mut Reader<'data>) -> ProtocolResult<Self> {
+        let len = reader.u8()?;
+        if len == 0 || len > MAX_CHEST_NAME_LEN {
+            return Ok(Self(None));
+        }
+        reader.string().map(|name| Self(Some(name)))
+    }
+}
+
+impl Encode for ChestName<'_> {
+    fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
+        match self.0 {
+            Some(name) if !name.is_empty() => {
+                let len = u8::try_from(name.len())
+                    .map_err(|_| ProtocolError::PacketTooLarge(name.len()))?;
+                writer.u8(len);
+                writer.string(name)
+            }
+            _ => {
+                writer.u8(0);
+                Ok(())
+            }
+        }
+    }
+}
+
 pub const MAX_BUFFS: usize = 44;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

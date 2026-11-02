@@ -1,4 +1,4 @@
-use crate::field::{Buff, BuffList, Color, Remainder, SpawnPoints};
+use crate::field::{Buff, BuffList, ChestName, Color, Remainder, SpawnPoints};
 use crate::text::NetworkText;
 
 define_packets! {
@@ -191,6 +191,7 @@ define_packets! {
             prefix: u8,
             item_net_id: i16,
         },
+        33 ActiveChest<'data> { chest: i16, x: i16, y: i16, name: ChestName<'data> },
         34 PlaceChest { action: u8, x: i16, y: i16, style: i16, chest_to_destroy: i16 },
         35 HealEffect { player_id: u8, amount: i16 },
         36 PlayerZone { player_id: u8, flags1: u8, flags2: u8, flags3: u8, flags4: u8 },
@@ -231,6 +232,7 @@ define_packets! {
             random: i8,
             direction: bool,
         },
+        82 NetModule<'data> { module: u16, rest: Remainder<'data> },
         84 SetPlayerStealth { player_id: u8, stealth: f32 },
         90 UpdateItemDrop2 {
             item_id: i16,

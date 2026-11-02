@@ -2,7 +2,7 @@ use cobalt_protocol::registry::RequestWorldData;
 use cobalt_protocol::{C2s, Frame, Packet};
 
 use super::error::ClientError;
-use crate::player::{Item, Player};
+use crate::model::{Item, Player};
 
 pub(super) enum Stage {
     Authenticating(Authenticating),
@@ -30,7 +30,9 @@ impl Authenticating {
         if frame.kind == RequestWorldData::ID {
             return Ok(Absorbed::Complete);
         }
-        remember(&mut self.player, frame)?;
+        if let Some(packet) = C2s::decode(frame)? {
+            remember(&mut self.player, frame, &packet)?;
+        }
         Ok(Absorbed::Pending)
     }
 
@@ -39,9 +41,11 @@ impl Authenticating {
     }
 }
 
-pub(super) fn remember(player: &mut Player, frame: Frame<'_>) -> Result<(), ClientError> {
-    let Some(packet) = C2s::decode(frame)? else { return Ok(()) };
-
+pub(super) fn remember(
+    player: &mut Player,
+    frame: Frame<'_>,
+    packet: &C2s<'_>,
+) -> Result<(), ClientError> {
     match packet {
         C2s::PlayerInfo(info) => {
             player.name = info.name.to_owned();

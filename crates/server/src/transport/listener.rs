@@ -73,9 +73,8 @@ mod tests {
     use super::*;
     use crate::config::ServerConfig;
     use crate::error::ServerError;
-    use crate::event::Event;
-    use crate::handle::ServerHandle;
-    use crate::server::{RunningServer, Server};
+    use crate::model::Event;
+    use crate::runtime::{RunningServer, Server, ServerHandle};
 
     const TIMEOUT: Duration = Duration::from_secs(5);
 

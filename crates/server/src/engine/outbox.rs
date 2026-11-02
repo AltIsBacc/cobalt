@@ -2,8 +2,7 @@ use std::mem;
 
 use cobalt_protocol::{ProtocolResult, S2c};
 
-use crate::client::ClientId;
-use crate::event::Event;
+use crate::model::{ClientId, Event};
 
 #[derive(Debug)]
 pub(crate) struct Outbox {

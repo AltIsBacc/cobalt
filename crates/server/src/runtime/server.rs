@@ -6,13 +6,12 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::{self, Instant, Interval, MissedTickBehavior};
 
+use super::handle::{Control, ServerHandle};
 use crate::config::ServerConfig;
 use crate::engine::{Admission, Engine, Flow, Outbox};
 use crate::error::{ServerError, ServerResult};
-use crate::event::Event;
-use crate::handle::{Control, ServerHandle};
 use crate::log::debug_log;
-use crate::status::Status;
+use crate::model::{Event, Status};
 use crate::transport::{Hub, Listener, Queue, Traffic};
 
 const CONTROL_CAPACITY: usize = 8;

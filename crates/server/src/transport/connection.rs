@@ -13,9 +13,9 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 use super::hub::{Hub, Inbox, Traffic, stopped};
-use crate::client::ClientId;
 use crate::engine::Admission;
 use crate::log::debug_log;
+use crate::model::ClientId;
 
 const READ_CHUNK_LEN: usize = 4096;
 const WRITE_BATCH_LEN: usize = 64;

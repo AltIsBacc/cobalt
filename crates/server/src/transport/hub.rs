@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::client::ClientId;
 use crate::engine::Admission;
+use crate::model::ClientId;
 
 pub(crate) type Queue = mpsc::Sender<Vec<u8>>;
 pub(crate) type Inbox = mpsc::Receiver<Vec<u8>>;

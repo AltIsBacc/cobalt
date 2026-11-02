@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use cobalt_format::World;
 use cobalt_format::world::header::Size;
-use cobalt_protocol::registry::{CompleteConnectionAndSpawn, Status, TileSection};
+use cobalt_protocol::registry::{CompleteConnectionAndSpawn, SectionTileFrame, Status, TileSection};
 use cobalt_protocol::{NetworkText, ProtocolResult, Remainder, Writer};
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
@@ -12,7 +12,7 @@ use flate2::write::DeflateEncoder;
 use super::Outbox;
 use super::error::ClientError;
 use super::world_info::narrow;
-use crate::client::ClientId;
+use crate::model::ClientId;
 
 const SECTION_WIDTH: usize = 200;
 const SECTION_HEIGHT: usize = 150;
@@ -51,38 +51,73 @@ impl Section {
     }
 }
 
+struct Window {
+    columns: Range<usize>,
+    rows: Range<usize>,
+}
+
+impl Window {
+    fn around(size: Size, x: i32, y: i32) -> Self {
+        Self {
+            columns: window(
+                narrow::<i32, usize>(x) / SECTION_WIDTH,
+                RADIUS_X,
+                size.width.div_ceil(SECTION_WIDTH),
+            ),
+            rows: window(
+                narrow::<i32, usize>(y) / SECTION_HEIGHT,
+                RADIUS_Y,
+                size.height.div_ceil(SECTION_HEIGHT),
+            ),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.columns.len() * self.rows.len()
+    }
+
+    fn frame(&self) -> SectionTileFrame {
+        SectionTileFrame {
+            start_x: narrow(self.columns.start),
+            start_y: narrow(self.rows.start),
+            end_x: narrow(self.columns.end.saturating_sub(1)),
+            end_y: narrow(self.rows.end.saturating_sub(1)),
+        }
+    }
+}
+
 pub(super) fn send_spawn(world: &World, to: ClientId, out: &mut Outbox) -> Result<(), ClientError> {
-    let size = world.header.size;
     let spawn = world.header.locations.spawn;
-    let columns = window(
-        narrow::<i32, usize>(spawn.x) / SECTION_WIDTH,
-        RADIUS_X,
-        size.width.div_ceil(SECTION_WIDTH),
-    );
-    let rows = window(
-        narrow::<i32, usize>(spawn.y) / SECTION_HEIGHT,
-        RADIUS_Y,
-        size.height.div_ceil(SECTION_HEIGHT),
-    );
+    let window = Window::around(world.header.size, spawn.x, spawn.y);
 
     let status = Status {
-        status_max: narrow(columns.len() * rows.len()),
+        status_max: narrow(window.len()),
         text: NetworkText::Localized { key: STATUS_TEXT, args: Cow::Borrowed(&[]) },
         flags: 0,
     };
     out.send(to, status.into())?;
+    send_window(world, &window, to, out)?;
+    out.send(to, CompleteConnectionAndSpawn {}.into())?;
+    Ok(())
+}
 
+fn send_window(
+    world: &World,
+    window: &Window,
+    to: ClientId,
+    out: &mut Outbox,
+) -> Result<(), ClientError> {
+    let size = world.header.size;
     let mut stream = Vec::new();
-    for column in columns {
-        for row in rows.clone() {
+    for column in window.columns.clone() {
+        for row in window.rows.clone() {
             stream.clear();
             write_stream(world, &Section::new(size, column, row), &mut stream)?;
             let payload = deflate(&stream)?;
             out.send(to, TileSection { payload: Remainder(&payload) }.into())?;
         }
     }
-
-    out.send(to, CompleteConnectionAndSpawn {}.into())?;
+    out.send(to, window.frame().into())?;
     Ok(())
 }
 

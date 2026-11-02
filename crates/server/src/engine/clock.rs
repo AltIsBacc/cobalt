@@ -9,23 +9,35 @@ const TICKS_PER_SECOND: f64 = 60.0;
 pub(super) struct Clock {
     day: bool,
     time: f64,
+    unsynced_ticks: u32,
 }
 
 impl Clock {
     pub(super) fn new(world: &World) -> Self {
         let header = &world.header;
-        Self { day: header.flags.contains(&WorldFlag::DayTime), time: header.clock.time }
+        Self {
+            day: header.flags.contains(&WorldFlag::DayTime),
+            time: header.clock.time,
+            unsynced_ticks: 0,
+        }
     }
 
     pub(super) fn advance(&mut self, tick_rate: u32) -> bool {
         self.time += TICKS_PER_SECOND / f64::from(tick_rate);
+        self.unsynced_ticks += 1;
+
         let length = if self.day { DAY_LENGTH } else { NIGHT_LENGTH };
-        if self.time < length {
-            return false;
+        let flipped = self.time >= length;
+        if flipped {
+            self.time -= length;
+            self.day = !self.day;
         }
-        self.time -= length;
-        self.day = !self.day;
-        true
+
+        let due = flipped || self.unsynced_ticks >= tick_rate;
+        if due {
+            self.unsynced_ticks = 0;
+        }
+        due
     }
 
     pub(super) fn packet(&self) -> Time {
