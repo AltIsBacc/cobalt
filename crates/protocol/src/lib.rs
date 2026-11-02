@@ -1,22 +1,20 @@
 #[macro_use]
 mod macros;
-#[macro_use]
-mod shared;
 
-mod c2s;
+pub mod c2s;
+pub mod s2c;
+pub mod shared;
+
 mod codec;
 mod error;
 mod field;
 mod frame;
-mod message;
 mod packet;
-mod s2c;
+mod text;
 
-pub use c2s::{C2sMessage, C2sPacket};
 pub use codec::{Reader, Writer};
 pub use error::{ProtocolError, ProtocolResult};
-pub use field::{Buff, Color, Field};
-pub use frame::{Frame, HEADER_LEN};
-pub use message::Message;
-pub use packet::{NetworkText, PROTOCOL_VERSION};
-pub use s2c::{S2cMessage, S2cPacket};
+pub use field::{Buff, Color, Decode, Encode};
+pub use frame::{Frame, HEADER_LEN, write_c2s, write_s2c};
+pub use packet::{C2s, PROTOCOL_VERSION, Packet, S2c};
+pub use text::NetworkText;

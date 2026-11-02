@@ -1,39 +1,33 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::TcpListener;
-use tokio::sync::watch;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time;
 
-use super::session;
+use super::connection;
+use super::shared::{Shared, stopped};
 use crate::error::ServerResult;
-use crate::handle::ServerHandle;
 use crate::log::debug_log;
 
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
 pub(crate) struct Listener {
     local_addr: SocketAddr,
-    shutdown: watch::Sender<()>,
     task: JoinHandle<()>,
 }
 
 impl Listener {
-    pub(crate) fn bind(
-        addr: SocketAddr,
-        server: ServerHandle,
-        handshake_timeout: Duration,
-    ) -> ServerResult<Self> {
+    pub(crate) fn bind(addr: SocketAddr, shared: Arc<Shared>) -> ServerResult<Self> {
         let listener = std::net::TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
         let listener = TcpListener::from_std(listener)?;
         let local_addr = listener.local_addr()?;
         debug_log!("listening on {local_addr}");
-        let (shutdown, signal) = watch::channel(());
-        let task = tokio::spawn(accept_loop(listener, server, handshake_timeout, signal));
+        let task = tokio::spawn(accept_loop(listener, shared));
 
-        Ok(Self { local_addr, shutdown, task })
+        Ok(Self { local_addr, task })
     }
 
     pub(crate) const fn local_addr(&self) -> SocketAddr {
@@ -41,50 +35,40 @@ impl Listener {
     }
 
     pub(crate) async fn stop(self) {
-        let Self { shutdown, task, .. } = self;
-        drop(shutdown);
-        let _ = task.await;
+        let _ = self.task.await;
     }
 }
 
-async fn accept_loop(
-    listener: TcpListener,
-    server: ServerHandle,
-    handshake_timeout: Duration,
-    mut shutdown: watch::Receiver<()>,
-) {
-    let mut sessions = JoinSet::new();
+async fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
+    let mut shutdown = shared.shutdown_signal();
+    let mut connections = JoinSet::new();
 
     loop {
         tokio::select! {
-            _ = shutdown.changed() => break,
+            () = stopped(&mut shutdown) => break,
             accepted = listener.accept() => match accepted {
                 Ok((socket, peer)) => {
-                    sessions.spawn(session::serve(
-                        socket,
-                        peer,
-                        server.clone(),
-                        handshake_timeout,
-                        shutdown.clone(),
-                    ));
+                    connections.spawn(connection::serve(socket, peer, Arc::clone(&shared)));
                 }
                 Err(error) => {
                     debug_log!("accept failed: {error}");
                     time::sleep(ACCEPT_BACKOFF).await;
                 }
             },
-            Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
+            Some(_) = connections.join_next(), if !connections.is_empty() => {}
         }
     }
 
-    while sessions.join_next().await.is_some() {}
+    while connections.join_next().await.is_some() {}
 }
 
 #[cfg(test)]
 mod tests {
     use cobalt_format::World;
     use cobalt_format::world::header::{Difficulty, Size};
-    use cobalt_protocol::{C2sPacket, Frame, Message, NetworkText, PROTOCOL_VERSION, S2cPacket};
+    use cobalt_protocol::c2s::Connect;
+    use cobalt_protocol::s2c::Disconnect;
+    use cobalt_protocol::{Frame, NetworkText, PROTOCOL_VERSION, write_c2s};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
@@ -92,9 +76,16 @@ mod tests {
     use crate::config::ServerConfig;
     use crate::error::ServerError;
     use crate::event::Event;
+    use crate::handle::ServerHandle;
     use crate::server::{RunningServer, Server};
 
     const TIMEOUT: Duration = Duration::from_secs(5);
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Received {
+        Disconnect(String),
+        Other(u8),
+    }
 
     fn listening(config: ServerConfig) -> ServerConfig {
         ServerConfig { listen: Some("127.0.0.1:0".parse().unwrap()), ..config }
@@ -106,14 +97,10 @@ mod tests {
         Server::spawn(world, listening(config)).unwrap()
     }
 
-    fn encode(packet: &C2sPacket) -> Vec<u8> {
+    fn connect_bytes(version: &str) -> Vec<u8> {
         let mut out = Vec::new();
-        packet.encode(&mut out).unwrap();
+        write_c2s(&mut out, &Connect { version }).unwrap();
         out
-    }
-
-    fn connect_bytes() -> Vec<u8> {
-        encode(&C2sPacket::Connect { version: PROTOCOL_VERSION.to_owned() })
     }
 
     async fn dial(running: &RunningServer) -> TcpStream {
@@ -122,16 +109,21 @@ mod tests {
 
     async fn join(running: &RunningServer) -> TcpStream {
         let mut stream = dial(running).await;
-        stream.write_all(&connect_bytes()).await.unwrap();
+        stream.write_all(&connect_bytes(PROTOCOL_VERSION)).await.unwrap();
         stream
     }
 
-    async fn read_packet(stream: &mut TcpStream) -> Option<S2cPacket> {
+    async fn read_packet(stream: &mut TcpStream) -> Option<Received> {
         time::timeout(TIMEOUT, async {
             let mut buffer = Vec::new();
             loop {
                 if let Some((frame, _)) = Frame::parse(&buffer).unwrap() {
-                    return Some(S2cPacket::decode(frame).unwrap());
+                    return Some(match frame.decode_s2c::<Disconnect>() {
+                        Ok(Disconnect { reason: NetworkText::Literal(reason) }) => {
+                            Received::Disconnect(reason.to_owned())
+                        }
+                        _ => Received::Other(frame.kind),
+                    });
                 }
                 match stream.read_buf(&mut buffer).await {
                     Ok(0) | Err(_) => return None,
@@ -157,8 +149,8 @@ mod tests {
         .unwrap();
     }
 
-    fn disconnect(reason: &str) -> Option<S2cPacket> {
-        Some(S2cPacket::Disconnect { reason: NetworkText::literal(reason) })
+    fn disconnect(reason: &str) -> Option<Received> {
+        Some(Received::Disconnect(reason.to_owned()))
     }
 
     #[tokio::test]
@@ -182,7 +174,7 @@ mod tests {
 
         let mut stream = dial(&running).await;
         let mut bytes = vec![3, 0, 200];
-        bytes.extend(connect_bytes());
+        bytes.extend(connect_bytes(PROTOCOL_VERSION));
         stream.write_all(&bytes[..6]).await.unwrap();
         time::sleep(Duration::from_millis(20)).await;
         stream.write_all(&bytes[6..]).await.unwrap();
@@ -213,8 +205,7 @@ mod tests {
         let running = start(ServerConfig::default());
 
         let mut stream = dial(&running).await;
-        let bytes = encode(&C2sPacket::Connect { version: "Terraria1".to_owned() });
-        stream.write_all(&bytes).await.unwrap();
+        stream.write_all(&connect_bytes("Terraria1")).await.unwrap();
 
         assert_eq!(read_packet(&mut stream).await, disconnect("incompatible client version"));
         assert_eq!(running.handle().status().await.unwrap().players, 0);

@@ -1,61 +1,49 @@
-use tokio::sync::{broadcast, mpsc, oneshot};
+use std::fmt;
+use std::sync::Arc;
 
-use crate::client::ClientId;
-use crate::command::Command;
-use crate::error::{ServerError, ServerResult};
-use crate::event::{Event, Events};
-use crate::player::Player;
+use crate::error::ServerResult;
+use crate::event::Events;
 use crate::status::Status;
+use crate::transport::Shared;
 
-#[derive(Debug, Clone)]
+struct Guard(Arc<Shared>);
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        let _ = self.0.shutdown();
+    }
+}
+
+#[derive(Clone)]
 pub struct ServerHandle {
-    commands: mpsc::Sender<Command>,
-    events: broadcast::Sender<Event>,
+    guard: Arc<Guard>,
 }
 
 impl ServerHandle {
-    pub(crate) fn new(
-        commands: mpsc::Sender<Command>,
-        events: broadcast::Sender<Event>,
-    ) -> Self {
-        Self { commands, events }
+    pub(crate) fn new(shared: Arc<Shared>) -> Self {
+        Self { guard: Arc::new(Guard(shared)) }
     }
 
     #[must_use]
     pub fn subscribe(&self) -> Events {
-        self.events.subscribe()
-    }
-
-    pub async fn join(&self) -> ServerResult<ClientId> {
-        self.request(|reply| Command::Join { reply }).await?
-    }
-
-    pub async fn login(&self, id: ClientId, player: Player) -> ServerResult {
-        self.request(|reply| Command::Login { id, player, reply }).await?
-    }
-
-    pub async fn leave(&self, id: ClientId) -> ServerResult {
-        self.request(|reply| Command::Leave { id, reply }).await?
+        self.guard.0.subscribe()
     }
 
     pub async fn status(&self) -> ServerResult<Status> {
-        self.request(|reply| Command::Status { reply }).await
+        self.guard.0.status()
     }
 
     pub async fn set_tick_rate(&self, rate: u32) -> ServerResult {
-        self.request(|reply| Command::SetTickRate { rate, reply }).await?
+        self.guard.0.set_tick_rate(rate)
     }
 
     pub async fn shutdown(&self) -> ServerResult {
-        self.request(|reply| Command::Shutdown { reply }).await
+        self.guard.0.shutdown()
     }
+}
 
-    async fn request<T>(
-        &self,
-        build: impl FnOnce(oneshot::Sender<T>) -> Command,
-    ) -> ServerResult<T> {
-        let (reply, response) = oneshot::channel();
-        self.commands.send(build(reply)).await.map_err(|_| ServerError::Stopped)?;
-        response.await.map_err(|_| ServerError::Stopped)
+impl fmt::Debug for ServerHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ServerHandle").finish_non_exhaustive()
     }
 }

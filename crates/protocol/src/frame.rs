@@ -1,5 +1,7 @@
-use crate::codec::Writer;
+use crate::codec::{Reader, Writer};
 use crate::error::{ProtocolError, ProtocolResult};
+use crate::field::{Decode, Encode};
+use crate::packet::{C2s, Packet, S2c};
 
 pub const HEADER_LEN: usize = 3;
 
@@ -20,24 +22,40 @@ impl<'data> Frame<'data> {
 
         Ok(Some((Self { kind: frame[2], payload: &frame[HEADER_LEN..] }, len)))
     }
+
+    pub fn decode_c2s<P: C2s + Decode<'data>>(&self) -> ProtocolResult<P> {
+        self.decode()
+    }
+
+    pub fn decode_s2c<P: S2c + Decode<'data>>(&self) -> ProtocolResult<P> {
+        self.decode()
+    }
+
+    fn decode<P: Packet + Decode<'data>>(&self) -> ProtocolResult<P> {
+        if self.kind != P::ID {
+            return Err(ProtocolError::UnknownMessage(self.kind));
+        }
+        P::decode(&mut Reader::new(self.payload))
+    }
 }
 
-pub(crate) fn encode(
-    kind: u8,
-    out: &mut Vec<u8>,
-    body: impl FnOnce(&mut Writer<'_>) -> ProtocolResult,
-) -> ProtocolResult {
-    let start = out.len();
-    out.extend_from_slice(&[0, 0, kind]);
+pub fn write_c2s<P: C2s + Encode>(out: &mut Vec<u8>, packet: &P) -> ProtocolResult {
+    write(out, packet)
+}
 
-    let written = body(&mut Writer::new(out));
+pub fn write_s2c<P: S2c + Encode>(out: &mut Vec<u8>, packet: &P) -> ProtocolResult {
+    write(out, packet)
+}
+
+fn write<P: Packet + Encode>(out: &mut Vec<u8>, packet: &P) -> ProtocolResult {
+    let start = out.len();
+    out.extend_from_slice(&[0, 0, P::ID]);
+
+    let written = packet.encode(&mut Writer::new(out));
     let len = out.len() - start;
 
-    let framed = written.and_then(|()| {
-        u16::try_from(len).map_err(|_| ProtocolError::PacketTooLarge(len))
-    });
-
-    match framed {
+    match written.and_then(|()| u16::try_from(len).map_err(|_| ProtocolError::PacketTooLarge(len)))
+    {
         Ok(len) => {
             out[start..start + 2].copy_from_slice(&len.to_le_bytes());
             Ok(())
@@ -51,7 +69,11 @@ pub(crate) fn encode(
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::*;
+    use crate::s2c::Disconnect;
+    use crate::text::NetworkText;
 
     #[test]
     fn waits_for_a_complete_frame() {
@@ -76,20 +98,21 @@ mod tests {
     #[test]
     fn failed_encodes_leave_the_buffer_untouched() {
         let mut out = vec![1, 2, 3];
-        let result = encode(1, &mut out, |writer| {
-            writer.u8(0);
-            Err(ProtocolError::UnexpectedEof)
-        });
-        assert!(result.is_err());
+
+        let args = vec![NetworkText::Literal(""); 256];
+        let reason = NetworkText::Formatted { text: "", args: Cow::Owned(args) };
+        assert!(matches!(
+            write_s2c(&mut out, &Disconnect { reason }),
+            Err(ProtocolError::TooManySubstitutions(256))
+        ));
         assert_eq!(out, [1, 2, 3]);
 
-        let result = encode(1, &mut out, |writer| {
-            for _ in 0..=u16::MAX {
-                writer.u8(0);
-            }
-            Ok(())
-        });
-        assert!(matches!(result, Err(ProtocolError::PacketTooLarge(_))));
+        let long = "a".repeat(usize::from(u16::MAX));
+        let reason = NetworkText::Literal(&long);
+        assert!(matches!(
+            write_s2c(&mut out, &Disconnect { reason }),
+            Err(ProtocolError::PacketTooLarge(_))
+        ));
         assert_eq!(out, [1, 2, 3]);
     }
 }

@@ -1,170 +1,69 @@
 use std::net::SocketAddr;
-use std::ops::ControlFlow;
+use std::sync::Arc;
 use std::time::Duration;
 
 use cobalt_format::World;
-use tokio::sync::{broadcast, mpsc};
 use tokio::task::{JoinError, JoinHandle};
-use tokio::time::{self, Instant, Interval, MissedTickBehavior};
+use tokio::time::{self, Interval, MissedTickBehavior};
 
-use crate::client::Clients;
-use crate::command::Command;
-use crate::config::{self, ServerConfig};
-use crate::error::{ServerError, ServerResult};
-use crate::event::Event;
+use crate::config::ServerConfig;
+use crate::error::ServerResult;
 use crate::handle::ServerHandle;
-use crate::log::debug_log;
-use crate::net::Listener;
-use crate::status::Status;
-
-enum Wake {
-    Tick,
-    Command(Option<Command>),
-}
+use crate::transport::{Listener, Shared, stopped};
 
 pub struct Server {
-    world: World,
-    config: ServerConfig,
-    clients: Clients,
-    ticks: u64,
-    started: Instant,
-    commands: mpsc::Receiver<Command>,
-    events: broadcast::Sender<Event>,
+    shared: Arc<Shared>,
+    tick_rate: u32,
 }
 
 impl Server {
     pub fn try_new(world: World, config: ServerConfig) -> ServerResult<(Self, ServerHandle)> {
         config.validate()?;
 
-        let (commands_tx, commands_rx) = mpsc::channel(config.command_capacity);
-        let (events_tx, _) = broadcast::channel(config.event_capacity);
+        let shared = Arc::new(Shared::new(world, &config));
+        let handle = ServerHandle::new(Arc::clone(&shared));
 
-        let server = Self {
-            world,
-            config,
-            clients: Clients::new(config.max_players),
-            ticks: 0,
-            started: Instant::now(),
-            commands: commands_rx,
-            events: events_tx.clone(),
-        };
-
-        Ok((server, ServerHandle::new(commands_tx, events_tx)))
+        Ok((Self { shared, tick_rate: config.tick_rate }, handle))
     }
 
     pub fn spawn(world: World, config: ServerConfig) -> ServerResult<RunningServer> {
         let (server, handle) = Self::try_new(world, config)?;
         let listener = config
             .listen
-            .map(|addr| Listener::bind(addr, handle.clone(), config.handshake_timeout))
+            .map(|addr| Listener::bind(addr, Arc::clone(&server.shared)))
             .transpose()?;
         let task = tokio::spawn(server.run());
 
         Ok(RunningServer { handle, task, listener })
     }
 
-    pub async fn run(mut self) {
-        self.started = Instant::now();
-
-        let mut rate = self.config.tick_rate;
-        let mut ticker = Self::ticker(rate);
+    pub async fn run(self) {
+        let mut shutdown = self.shared.shutdown_signal();
+        let mut rate = self.tick_rate;
+        let mut ticker = interval(rate);
 
         loop {
-            let wake = tokio::select! {
-                _ = ticker.tick() => Wake::Tick,
-                command = self.commands.recv() => Wake::Command(command),
-            };
-
-            match wake {
-                Wake::Tick => self.tick(),
-                Wake::Command(None) => break,
-                Wake::Command(Some(command)) => {
-                    if self.dispatch(command).is_break() {
-                        break;
-                    }
-                    if rate != self.config.tick_rate {
-                        rate = self.config.tick_rate;
-                        ticker = Self::ticker(rate);
+            tokio::select! {
+                _ = ticker.tick() => {
+                    let current = self.shared.tick();
+                    if current != rate {
+                        rate = current;
+                        ticker = interval(rate);
                     }
                 }
+                () = stopped(&mut shutdown) => break,
             }
         }
 
-        self.emit(Event::Stopped);
+        self.shared.drained().await;
+        self.shared.publish_stopped();
     }
+}
 
-    fn ticker(rate: u32) -> Interval {
-        let mut ticker = time::interval(Duration::from_secs(1) / rate);
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        ticker
-    }
-
-    fn tick(&mut self) {
-        self.ticks += 1;
-    }
-
-    fn dispatch(&mut self, command: Command) -> ControlFlow<()> {
-        match command {
-            Command::Join { reply } => {
-                let result = self.clients.insert().ok_or(ServerError::Full);
-                if let Ok(id) = &result {
-                    self.emit(Event::ClientJoined { id: *id });
-                }
-                let _ = reply.send(result);
-            }
-            Command::Login { id, player, reply } => {
-                let result = if self.clients.set_player(id, player) {
-                    self.emit(Event::ClientLoggedIn { id });
-                    Ok(())
-                } else {
-                    Err(ServerError::UnknownClient(id))
-                };
-                let _ = reply.send(result);
-            }
-            Command::Leave { id, reply } => {
-                let result = if self.clients.remove(id) {
-                    self.emit(Event::ClientLeft { id });
-                    Ok(())
-                } else {
-                    Err(ServerError::UnknownClient(id))
-                };
-                let _ = reply.send(result);
-            }
-            Command::Status { reply } => {
-                let _ = reply.send(self.status());
-            }
-            Command::SetTickRate { rate, reply } => {
-                let result = config::validate_tick_rate(rate);
-                if result.is_ok() {
-                    self.config.tick_rate = rate;
-                    debug_log!("tick rate set to {rate}");
-                }
-                let _ = reply.send(result);
-            }
-            Command::Shutdown { reply } => {
-                let _ = reply.send(());
-                return ControlFlow::Break(());
-            }
-        }
-
-        ControlFlow::Continue(())
-    }
-
-    fn status(&self) -> Status {
-        Status {
-            world_name: self.world.header.name.clone(),
-            players: self.clients.count(),
-            max_players: self.clients.capacity(),
-            tick_rate: self.config.tick_rate,
-            ticks: self.ticks,
-            uptime: self.started.elapsed(),
-        }
-    }
-
-    fn emit(&self, event: Event) {
-        debug_log!("event: {event:?}");
-        let _ = self.events.send(event);
-    }
+fn interval(rate: u32) -> Interval {
+    let mut ticker = time::interval(Duration::from_secs(1) / rate);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    ticker
 }
 
 pub struct RunningServer {
@@ -196,10 +95,10 @@ impl RunningServer {
 
     pub async fn shutdown(self) -> Result<(), JoinError> {
         let Self { handle, task, listener } = self;
+        let _ = handle.shutdown().await;
         if let Some(listener) = listener {
             listener.stop().await;
         }
-        let _ = handle.shutdown().await;
         task.await
     }
 }
@@ -209,7 +108,7 @@ mod tests {
     use cobalt_format::world::header::{Difficulty, Size};
 
     use super::*;
-    use crate::event::Events;
+    use crate::error::ServerError;
 
     fn world() -> World {
         World::try_new("test", Size::try_new(4, 4).unwrap(), Difficulty::Normal).unwrap()
@@ -217,49 +116,6 @@ mod tests {
 
     fn config(max_players: u8) -> ServerConfig {
         ServerConfig { max_players, ..ServerConfig::default() }
-    }
-
-    async fn next(events: &mut Events) -> Event {
-        events.recv().await.unwrap()
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn clients_join_and_leave() {
-        let running = Server::spawn(world(), config(2)).unwrap();
-        let handle = running.handle().clone();
-
-        let a = handle.join().await.unwrap();
-        let b = handle.join().await.unwrap();
-        assert_ne!(a, b);
-        assert!(matches!(handle.join().await, Err(ServerError::Full)));
-
-        handle.leave(a).await.unwrap();
-        assert!(matches!(
-            handle.leave(a).await,
-            Err(ServerError::UnknownClient(id)) if id == a
-        ));
-
-        let status = handle.status().await.unwrap();
-        assert_eq!((status.players, status.max_players), (1, 2));
-        assert_eq!(status.world_name, "test");
-
-        assert_eq!(handle.join().await.unwrap(), a);
-        running.shutdown().await.unwrap();
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn events_are_broadcast_in_order() {
-        let running = Server::spawn(world(), config(2)).unwrap();
-        let handle = running.handle().clone();
-        let mut events = handle.subscribe();
-
-        let id = handle.join().await.unwrap();
-        handle.leave(id).await.unwrap();
-        running.shutdown().await.unwrap();
-
-        assert_eq!(next(&mut events).await, Event::ClientJoined { id });
-        assert_eq!(next(&mut events).await, Event::ClientLeft { id });
-        assert_eq!(next(&mut events).await, Event::Stopped);
     }
 
     #[tokio::test(start_paused = true)]
@@ -298,7 +154,7 @@ mod tests {
         let handle = running.handle().clone();
         running.shutdown().await.unwrap();
 
-        assert!(matches!(handle.join().await, Err(ServerError::Stopped)));
+        assert!(matches!(handle.set_tick_rate(30).await, Err(ServerError::Stopped)));
         assert!(matches!(handle.status().await, Err(ServerError::Stopped)));
     }
 
@@ -313,7 +169,7 @@ mod tests {
         for config in [
             ServerConfig { tick_rate: 0, ..ServerConfig::default() },
             ServerConfig { max_players: 0, ..ServerConfig::default() },
-            ServerConfig { command_capacity: 0, ..ServerConfig::default() },
+            ServerConfig { outbound_capacity: 0, ..ServerConfig::default() },
             ServerConfig { event_capacity: 0, ..ServerConfig::default() },
             ServerConfig { handshake_timeout: Duration::ZERO, ..ServerConfig::default() },
         ] {

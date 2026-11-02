@@ -1,19 +1,23 @@
 use crate::codec::{Reader, Writer};
 use crate::error::ProtocolResult;
 
-pub trait Field: Sized {
-    fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self>;
+pub trait Decode<'data>: Sized {
+    fn decode(reader: &mut Reader<'data>) -> ProtocolResult<Self>;
+}
 
+pub trait Encode {
     fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult;
 }
 
 macro_rules! numeric_fields {
     ($($ty:ty),* $(,)?) => {$(
-        impl Field for $ty {
+        impl Decode<'_> for $ty {
             fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self> {
                 reader.array().map(<$ty>::from_le_bytes)
             }
+        }
 
+        impl Encode for $ty {
             fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
                 writer.raw(&self.to_le_bytes());
                 Ok(())
@@ -24,36 +28,42 @@ macro_rules! numeric_fields {
 
 numeric_fields!(u8, i8, u16, i16, u32, i32, u64, f32);
 
-impl Field for bool {
+impl Decode<'_> for bool {
     fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self> {
         Ok(reader.u8()? != 0)
     }
+}
 
+impl Encode for bool {
     fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
         writer.u8(u8::from(*self));
         Ok(())
     }
 }
 
-impl Field for String {
-    fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self> {
-        reader.string().map(str::to_owned)
+impl<'data> Decode<'data> for &'data str {
+    fn decode(reader: &mut Reader<'data>) -> ProtocolResult<Self> {
+        reader.string()
     }
+}
 
+impl Encode for &str {
     fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
         writer.string(self)
     }
 }
 
-impl<T: Field + Copy + Default, const N: usize> Field for [T; N] {
-    fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self> {
+impl<'data, T: Decode<'data> + Copy + Default, const N: usize> Decode<'data> for [T; N] {
+    fn decode(reader: &mut Reader<'data>) -> ProtocolResult<Self> {
         let mut items = [T::default(); N];
         for item in &mut items {
             *item = T::decode(reader)?;
         }
         Ok(items)
     }
+}
 
+impl<T: Encode, const N: usize> Encode for [T; N] {
     fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
         self.iter().try_for_each(|item| item.encode(writer))
     }
@@ -66,12 +76,14 @@ pub struct Color {
     pub b: u8,
 }
 
-impl Field for Color {
+impl Decode<'_> for Color {
     fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self> {
         let [r, g, b] = reader.array::<3>()?;
         Ok(Self { r, g, b })
     }
+}
 
+impl Encode for Color {
     fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
         writer.raw(&[self.r, self.g, self.b]);
         Ok(())
@@ -84,11 +96,13 @@ pub struct Buff {
     pub time: i16,
 }
 
-impl Field for Buff {
+impl Decode<'_> for Buff {
     fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self> {
         Ok(Self { id: u16::decode(reader)?, time: i16::decode(reader)? })
     }
+}
 
+impl Encode for Buff {
     fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
         self.id.encode(writer)?;
         self.time.encode(writer)

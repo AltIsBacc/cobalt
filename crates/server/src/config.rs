@@ -7,7 +7,7 @@ use crate::error::{ServerError, ServerResult};
 pub struct ServerConfig {
     pub tick_rate: u32,
     pub max_players: u8,
-    pub command_capacity: usize,
+    pub outbound_capacity: usize,
     pub event_capacity: usize,
     pub listen: Option<SocketAddr>,
     pub handshake_timeout: Duration,
@@ -22,8 +22,8 @@ impl ServerConfig {
         if self.max_players == 0 {
             return Err(ServerError::InvalidConfig("max_players must be at least 1"));
         }
-        if self.command_capacity == 0 {
-            return Err(ServerError::InvalidConfig("command_capacity must be at least 1"));
+        if self.outbound_capacity == 0 {
+            return Err(ServerError::InvalidConfig("outbound_capacity must be at least 1"));
         }
         if self.event_capacity == 0 {
             return Err(ServerError::InvalidConfig("event_capacity must be at least 1"));
@@ -41,7 +41,7 @@ impl Default for ServerConfig {
         Self {
             tick_rate: 60,
             max_players: 8,
-            command_capacity: 256,
+            outbound_capacity: 256,
             event_capacity: 256,
             listen: None,
             handshake_timeout: Duration::from_secs(10),
