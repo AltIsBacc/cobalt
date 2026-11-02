@@ -14,7 +14,7 @@ mod text;
 
 pub use codec::{Reader, Writer};
 pub use error::{ProtocolError, ProtocolResult};
-pub use field::{Buff, Color, Decode, Encode};
+pub use field::{Buff, BuffList, Color, Decode, Encode, MAX_BUFFS, SpawnPoint, SpawnPoints};
 pub use frame::{Frame, HEADER_LEN, write_c2s, write_s2c};
 pub use packet::{C2s, PROTOCOL_VERSION, Packet, S2c};
 pub use text::NetworkText;

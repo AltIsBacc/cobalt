@@ -2,12 +2,13 @@ mod error;
 mod outbox;
 mod slots;
 mod stage;
+mod world_info;
 
 use std::mem;
 use std::time::Duration;
 
 use cobalt_format::World;
-use cobalt_protocol::c2s::Connect;
+use cobalt_protocol::c2s::{Connect, RequestEssentialTiles};
 use cobalt_protocol::s2c::{Disconnect, SetUserSlot};
 use cobalt_protocol::{Frame, NetworkText, PROTOCOL_VERSION, Packet, ProtocolResult};
 
@@ -25,7 +26,7 @@ use crate::status::Status;
 const INCOMPATIBLE_VERSION: &str = "incompatible client version";
 const SHUTTING_DOWN: &str = "the server is shutting down";
 const FULL: &str = "the server is full";
-const WORLD_UNAVAILABLE: &str = "world data is not available yet";
+const TILES_UNAVAILABLE: &str = "tile data is not available yet";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Admission {
@@ -129,8 +130,7 @@ impl Engine {
         frame: Frame<'_>,
         out: &mut Outbox,
     ) -> Result<Flow, ClientError> {
-        debug_log!("message from {id} arrived");
-        debug_log!("{} : {:?}", frame.kind, frame.payload);
+        debug_log!("[cid {id}] {} : {:?}", frame.kind, frame.payload);
         let Some(stage) = self.slots.get_mut(id) else { return Ok(Flow::Close) };
 
         match mem::replace(stage, Stage::Closing) {
@@ -143,9 +143,9 @@ impl Engine {
                     Ok(player) => {
                         debug_log!("{id} logged in as {}", player.name);
                         out.emit(Event::ClientLoggedIn { id });
-                        out.send(id, &refusal(WORLD_UNAVAILABLE))?;
+                        out.send(id, &world_info::build(&self.world))?;
                         *stage = Stage::Loading;
-                        Ok(Flow::Close)
+                        Ok(Flow::Open)
                     }
                     Err(reason) => {
                         out.send(id, &refusal(reason))?;
@@ -153,10 +153,15 @@ impl Engine {
                     }
                 },
             },
-            other => {
-                *stage = other;
+            Stage::Loading => {
+                *stage = Stage::Loading;
+                if frame.kind != RequestEssentialTiles::ID {
+                    return Ok(Flow::Open);
+                }
+                out.send(id, &refusal(TILES_UNAVAILABLE))?;
                 Ok(Flow::Close)
             }
+            Stage::Closing => Ok(Flow::Close),
         }
     }
 

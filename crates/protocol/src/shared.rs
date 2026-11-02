@@ -1,4 +1,4 @@
-use crate::field::Color;
+use crate::field::{BuffList, Color};
 use crate::text::NetworkText;
 
 packets! {
@@ -62,7 +62,7 @@ packets! {
         45 PlayerTeam { player_id: u8, team: u8 },
         47 UpdateSign<'a> { sign_id: i16, x: i16, y: i16, text: &'a str, player_id: u8, flags: u8 },
         48 SetLiquid { x: i16, y: i16, liquid: u8, liquid_type: u8 },
-        50 UpdatePlayerBuff { player_id: u8, buffs: [u16; 22] },
+        50 UpdatePlayerBuff { player_id: u8, buffs: BuffList },
         51 SpecialNpcEffect { player_id: u8, effect: u8 },
         52 Unlock { kind: u8, x: i16, y: i16 },
         53 AddNpcBuff { npc_id: i16, buff: u16, time: i16 },

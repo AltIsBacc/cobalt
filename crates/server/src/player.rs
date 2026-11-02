@@ -1,3 +1,5 @@
+use cobalt_protocol::BuffList;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Item {
     pub stack: i16,
@@ -13,13 +15,13 @@ pub struct Player {
     pub max_hp: i16,
     pub mana: i16,
     pub max_mana: i16,
-    pub buffs: [u16; 22],
+    pub buffs: BuffList,
     pub inventory: Box<[Item]>,
 }
 
 impl Player {
     pub const MAX_NAME_LEN: usize = 20;
-    pub const INVENTORY_SLOTS: usize = 260;
+    pub const INVENTORY_SLOTS: usize = 990;
 
     #[must_use]
     pub fn has_valid_name(&self) -> bool {
@@ -37,7 +39,7 @@ impl Default for Player {
             max_hp: 0,
             mana: 0,
             max_mana: 0,
-            buffs: [0; 22],
+            buffs: BuffList::default(),
             inventory: vec![Item::default(); Self::INVENTORY_SLOTS].into_boxed_slice(),
         }
     }

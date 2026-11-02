@@ -1,5 +1,5 @@
 use crate::codec::{Reader, Writer};
-use crate::error::ProtocolResult;
+use crate::error::{ProtocolError, ProtocolResult};
 
 pub trait Decode<'data>: Sized {
     fn decode(reader: &mut Reader<'data>) -> ProtocolResult<Self>;
@@ -106,5 +106,76 @@ impl Encode for Buff {
     fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
         self.id.encode(writer)?;
         self.time.encode(writer)
+    }
+}
+
+pub const MAX_BUFFS: usize = 44;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuffList(pub [u16; MAX_BUFFS]);
+
+impl Default for BuffList {
+    fn default() -> Self {
+        Self([0; MAX_BUFFS])
+    }
+}
+
+impl Decode<'_> for BuffList {
+    fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self> {
+        let mut ids = [0; MAX_BUFFS];
+        for id in &mut ids {
+            match u16::decode(reader)? {
+                0 => break,
+                value => *id = value,
+            }
+        }
+        Ok(Self(ids))
+    }
+}
+
+impl Encode for BuffList {
+    fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
+        let mut written = 0;
+        for id in self.0.iter().take_while(|&&id| id != 0) {
+            id.encode(writer)?;
+            written += 1;
+        }
+        if written < MAX_BUFFS {
+            0u16.encode(writer)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SpawnPoint {
+    pub x: i16,
+    pub y: i16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SpawnPoints(pub Vec<SpawnPoint>);
+
+impl Decode<'_> for SpawnPoints {
+    fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self> {
+        let count = usize::from(reader.u8()?);
+        let mut points = Vec::with_capacity(count);
+        for _ in 0..count {
+            points.push(SpawnPoint { x: i16::decode(reader)?, y: i16::decode(reader)? });
+        }
+        Ok(Self(points))
+    }
+}
+
+impl Encode for SpawnPoints {
+    fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
+        let count = u8::try_from(self.0.len())
+            .map_err(|_| ProtocolError::TooManySpawnPoints(self.0.len()))?;
+        writer.u8(count);
+        for point in &self.0 {
+            point.x.encode(writer)?;
+            point.y.encode(writer)?;
+        }
+        Ok(())
     }
 }

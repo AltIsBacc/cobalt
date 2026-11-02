@@ -33,4 +33,7 @@ pub enum ProtocolError {
 
     #[error("network text has {0} substitutions, the maximum is 255")]
     TooManySubstitutions(usize),
+
+    #[error("{0} spawn points, the maximum is 255")]
+    TooManySpawnPoints(usize),
 }
