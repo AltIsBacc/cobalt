@@ -1,7 +1,5 @@
-use crate::{
-    field::{Buff, Color},
-    packet::NetworkText,
-};
+use crate::field::{Buff, Color};
+use crate::packet::NetworkText;
 
 with_shared! {
     packets { S2cMessage, S2cPacket; }

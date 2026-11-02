@@ -1,4 +1,5 @@
-use crate::{field::Color, packet::NetworkText};
+use crate::field::Color;
+use crate::packet::NetworkText;
 
 with_shared! {
     packets { C2sMessage, C2sPacket; }

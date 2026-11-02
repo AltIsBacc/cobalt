@@ -1,4 +1,5 @@
-use crate::{error::ProtocolResult, frame::Frame};
+use crate::error::ProtocolResult;
+use crate::frame::Frame;
 
 pub trait Message: Sized {
     fn decode(frame: Frame<'_>) -> ProtocolResult<Self>;

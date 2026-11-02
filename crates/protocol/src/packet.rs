@@ -1,10 +1,8 @@
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-use crate::{
-    codec::{Reader, Writer},
-    error::{ProtocolError, ProtocolResult},
-    field::Field,
-};
+use crate::codec::{Reader, Writer};
+use crate::error::{ProtocolError, ProtocolResult};
+use crate::field::Field;
 
 pub const PROTOCOL_VERSION: &str = "Terraria326";
 
@@ -26,6 +24,7 @@ pub enum NetworkText {
 }
 
 impl NetworkText {
+    #[must_use]
     pub fn literal(text: impl Into<String>) -> Self {
         Self::Literal(text.into())
     }
@@ -36,7 +35,7 @@ impl NetworkText {
         }
 
         let mode = TextMode::try_from(reader.u8()?)
-            .map_err(|e| ProtocolError::UnknownTextMode(e.number))?;
+            .map_err(|error| ProtocolError::UnknownTextMode(error.number))?;
         let text = reader.string()?.to_owned();
 
         match mode {

@@ -12,17 +12,20 @@ macro_rules! packets {
             ::num_enum::TryFromPrimitive,
             ::num_enum::IntoPrimitive,
         )]
+        #[non_exhaustive]
         #[repr(u8)]
         pub enum $message {
             $($name = $id),*
         }
 
         #[derive(Debug, Clone, PartialEq)]
+        #[non_exhaustive]
         pub enum $packet {
             $($name $({ $($field: $ty),* })?),*
         }
 
         impl $packet {
+            #[must_use]
             pub const fn message_type(&self) -> $message {
                 match self {
                     $(Self::$name { .. } => $message::$name),*
@@ -33,7 +36,7 @@ macro_rules! packets {
         impl $crate::message::Message for $packet {
             fn decode(frame: $crate::frame::Frame<'_>) -> $crate::error::ProtocolResult<Self> {
                 let kind = $message::try_from(frame.kind)
-                    .map_err(|e| $crate::error::ProtocolError::UnknownMessage(e.number))?;
+                    .map_err(|error| $crate::error::ProtocolError::UnknownMessage(error.number))?;
                 let mut reader = $crate::codec::Reader::new(frame.payload);
 
                 Ok(match kind {

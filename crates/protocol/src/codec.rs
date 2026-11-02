@@ -1,12 +1,12 @@
 use crate::error::{ProtocolError, ProtocolResult};
 
 #[derive(Debug, Clone)]
-pub struct Reader<'a> {
-    data: &'a [u8],
+pub struct Reader<'data> {
+    data: &'data [u8],
 }
 
-impl<'a> Reader<'a> {
-    pub const fn new(data: &'a [u8]) -> Self {
+impl<'data> Reader<'data> {
+    pub const fn new(data: &'data [u8]) -> Self {
         Self { data }
     }
 
@@ -22,8 +22,8 @@ impl<'a> Reader<'a> {
         let mut value = 0u32;
         for shift in (0u32..35).step_by(7) {
             let byte = self.u8()?;
-            let bits = u32::from(byte & 0x7F);
-            if shift == 28 && bits > 0x0F {
+            let bits = u32::from(byte & 0x7f);
+            if shift == 28 && bits > 0x0f {
                 return Err(ProtocolError::VarintOverflow);
             }
             value |= bits << shift;
@@ -34,12 +34,12 @@ impl<'a> Reader<'a> {
         Err(ProtocolError::VarintOverflow)
     }
 
-    pub fn string(&mut self) -> ProtocolResult<&'a str> {
+    pub fn string(&mut self) -> ProtocolResult<&'data str> {
         let len = self.uleb128()? as usize;
         Ok(std::str::from_utf8(self.take(len)?)?)
     }
 
-    fn take(&mut self, len: usize) -> ProtocolResult<&'a [u8]> {
+    fn take(&mut self, len: usize) -> ProtocolResult<&'data [u8]> {
         let (head, rest) = self.data.split_at_checked(len).ok_or(ProtocolError::UnexpectedEof)?;
         self.data = rest;
         Ok(head)
@@ -47,12 +47,12 @@ impl<'a> Reader<'a> {
 }
 
 #[derive(Debug)]
-pub struct Writer<'a> {
-    out: &'a mut Vec<u8>,
+pub struct Writer<'buffer> {
+    out: &'buffer mut Vec<u8>,
 }
 
-impl<'a> Writer<'a> {
-    pub const fn new(out: &'a mut Vec<u8>) -> Self {
+impl<'buffer> Writer<'buffer> {
+    pub const fn new(out: &'buffer mut Vec<u8>) -> Self {
         Self { out }
     }
 
@@ -66,7 +66,7 @@ impl<'a> Writer<'a> {
 
     pub fn uleb128(&mut self, mut value: u32) {
         while value >= 0x80 {
-            self.out.push(((value & 0x7F) as u8) | 0x80);
+            self.out.push(((value & 0x7f) as u8) | 0x80);
             value >>= 7;
         }
         self.out.push(value as u8);
@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn uleb128_rejects_overflow() {
         assert!(matches!(
-            Reader::new(&[0xFF, 0xFF, 0xFF, 0xFF, 0x1F]).uleb128(),
+            Reader::new(&[0xff, 0xff, 0xff, 0xff, 0x1f]).uleb128(),
             Err(ProtocolError::VarintOverflow)
         ));
         assert!(matches!(Reader::new(&[0x80; 5]).uleb128(), Err(ProtocolError::VarintOverflow)));
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn strings_reject_truncation_and_bad_utf8() {
         assert!(matches!(Reader::new(&[5, b'a']).string(), Err(ProtocolError::UnexpectedEof)));
-        assert!(matches!(Reader::new(&[1, 0xFF]).string(), Err(ProtocolError::InvalidString(_))));
+        assert!(matches!(Reader::new(&[1, 0xff]).string(), Err(ProtocolError::InvalidString(_))));
     }
 
     #[test]

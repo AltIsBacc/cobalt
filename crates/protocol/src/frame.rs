@@ -1,24 +1,22 @@
-use crate::{
-    codec::Writer,
-    error::{ProtocolError, ProtocolResult},
-};
+use crate::codec::Writer;
+use crate::error::{ProtocolError, ProtocolResult};
 
 pub const HEADER_LEN: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Frame<'a> {
+pub struct Frame<'data> {
     pub kind: u8,
-    pub payload: &'a [u8],
+    pub payload: &'data [u8],
 }
 
-impl<'a> Frame<'a> {
-    pub fn parse(buf: &'a [u8]) -> ProtocolResult<Option<(Self, usize)>> {
-        let Some(&[low, high]) = buf.first_chunk::<2>() else { return Ok(None) };
+impl<'data> Frame<'data> {
+    pub fn parse(buffer: &'data [u8]) -> ProtocolResult<Option<(Self, usize)>> {
+        let Some(&[low, high]) = buffer.first_chunk::<2>() else { return Ok(None) };
         let len = usize::from(u16::from_le_bytes([low, high]));
         if len < HEADER_LEN {
             return Err(ProtocolError::FrameTooShort(len));
         }
-        let Some(frame) = buf.get(..len) else { return Ok(None) };
+        let Some(frame) = buffer.get(..len) else { return Ok(None) };
 
         Ok(Some((Self { kind: frame[2], payload: &frame[HEADER_LEN..] }, len)))
     }
@@ -58,8 +56,8 @@ mod tests {
     #[test]
     fn waits_for_a_complete_frame() {
         let partial: [&[u8]; 5] = [&[], &[5], &[5, 0], &[5, 0, 1], &[5, 0, 1, 9]];
-        for buf in partial {
-            assert!(Frame::parse(buf).unwrap().is_none());
+        for buffer in partial {
+            assert!(Frame::parse(buffer).unwrap().is_none());
         }
     }
 
@@ -86,7 +84,9 @@ mod tests {
         assert_eq!(out, [1, 2, 3]);
 
         let result = encode(1, &mut out, |writer| {
-            (0..=u16::MAX).for_each(|_| writer.u8(0));
+            for _ in 0..=u16::MAX {
+                writer.u8(0);
+            }
             Ok(())
         });
         assert!(matches!(result, Err(ProtocolError::PacketTooLarge(_))));

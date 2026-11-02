@@ -1,7 +1,5 @@
-use crate::{
-    codec::{Reader, Writer},
-    error::ProtocolResult,
-};
+use crate::codec::{Reader, Writer};
+use crate::error::ProtocolResult;
 
 pub trait Field: Sized {
     fn decode(reader: &mut Reader<'_>) -> ProtocolResult<Self>;

@@ -4,7 +4,8 @@ use thiserror::Error;
 
 pub type ProtocolResult<T = ()> = Result<T, ProtocolError>;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[non_exhaustive]
 pub enum ProtocolError {
     #[error("frame length {0} is shorter than the frame header")]
     FrameTooShort(usize),
