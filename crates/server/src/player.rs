@@ -16,6 +16,8 @@ pub struct Player {
     pub mana: i16,
     pub max_mana: i16,
     pub buffs: BuffList,
+    pub team: u8,
+    pub appearance: Vec<u8>,
     pub inventory: Box<[Item]>,
 }
 
@@ -40,6 +42,8 @@ impl Default for Player {
             mana: 0,
             max_mana: 0,
             buffs: BuffList::default(),
+            team: 0,
+            appearance: Vec::new(),
             inventory: vec![Item::default(); Self::INVENTORY_SLOTS].into_boxed_slice(),
         }
     }

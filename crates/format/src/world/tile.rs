@@ -42,6 +42,8 @@ const H4_BLOCK_ILLUMINANT: u8 = 1 << 3;
 const H4_WALL_ILLUMINANT: u8 = 1 << 4;
 
 const BLOCK_ID_FRAME_V_ZERO: u16 = 144;
+const BATCHING_EXEMPT: [u16; 4] = [423, 520, 723, 724];
+const MAX_BODY_LEN: usize = 13;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Tile {
@@ -135,6 +137,135 @@ impl Tile {
         };
 
         Ok((Self { block, wall, liquid, mechanicals }, repeat))
+    }
+
+    #[must_use]
+    pub fn allows_batching(&self) -> bool {
+        self.block.is_none_or(|block| !BATCHING_EXEMPT.contains(&block.id))
+    }
+
+    pub fn write(&self, out: &mut Vec<u8>, frame_important: &FrameImportant, repeat: u16) {
+        let (mut h1, mut h2, mut h3, mut h4) = (0u8, 0u8, 0u8, 0u8);
+        let mut body = [0u8; MAX_BODY_LEN];
+        let mut len = 0;
+        let mut push = |bytes: &[u8]| {
+            body[len..len + bytes.len()].copy_from_slice(bytes);
+            len += bytes.len();
+        };
+
+        if let Some(block) = &self.block {
+            h1 |= H1_ACTIVE;
+            h2 |= (block.shape as u8) << 4;
+            match u8::try_from(block.id) {
+                Ok(id) => push(&[id]),
+                Err(_) => {
+                    h1 |= H1_WIDE_BLOCK;
+                    push(&block.id.to_le_bytes());
+                }
+            }
+            if frame_important.contains(block.id) {
+                let (u, v) = block.frame.map_or((0, 0), |frame| (frame.u, frame.v));
+                push(&u.to_le_bytes());
+                push(&v.to_le_bytes());
+            }
+            if block.paint != Paint::NONE {
+                h3 |= H3_BLOCK_PAINT;
+                push(&[block.paint.0]);
+            }
+            if block.is_actuated {
+                h3 |= H3_ACTUATED;
+            }
+            if block.is_illuminant {
+                h4 |= H4_BLOCK_ILLUMINANT;
+            }
+            if block.is_echo {
+                h4 |= H4_BLOCK_ECHO;
+            }
+        }
+
+        let mut wall_high = None;
+        if let Some(wall) = &self.wall {
+            h1 |= H1_WALL;
+            let [low, high] = wall.id.to_le_bytes();
+            push(&[low]);
+            if wall.paint != Paint::NONE {
+                h3 |= H3_WALL_PAINT;
+                push(&[wall.paint.0]);
+            }
+            if high != 0 {
+                h3 |= H3_WIDE_WALL;
+                wall_high = Some(high);
+            }
+            if wall.is_illuminant {
+                h4 |= H4_WALL_ILLUMINANT;
+            }
+            if wall.is_echo {
+                h4 |= H4_WALL_ECHO;
+            }
+        }
+
+        if let Some(liquid) = &self.liquid {
+            h1 |= liquid.kind.header_bits() << 3;
+            if liquid.kind == LiquidKind::Shimmer {
+                h3 |= H3_SHIMMER;
+            }
+            push(&[liquid.level]);
+        }
+
+        if let Some(high) = wall_high {
+            push(&[high]);
+        }
+
+        if self.mechanicals.contains(MechanicalState::HasRedWire) {
+            h2 |= H2_RED_WIRE;
+        }
+        if self.mechanicals.contains(MechanicalState::HasBlueWire) {
+            h2 |= H2_BLUE_WIRE;
+        }
+        if self.mechanicals.contains(MechanicalState::HasGreenWire) {
+            h2 |= H2_GREEN_WIRE;
+        }
+        if self.mechanicals.contains(MechanicalState::HasYellowWire) {
+            h3 |= H3_YELLOW_WIRE;
+        }
+        if self.mechanicals.contains(MechanicalState::HasActuator) {
+            h3 |= H3_ACTUATOR;
+        }
+
+        if repeat > 0 {
+            match u8::try_from(repeat) {
+                Ok(short) => {
+                    h1 |= 1 << H1_RLE_SHIFT;
+                    push(&[short]);
+                }
+                Err(_) => {
+                    h1 |= 2 << H1_RLE_SHIFT;
+                    push(&repeat.to_le_bytes());
+                }
+            }
+        }
+
+        if h4 != 0 {
+            h3 |= H3_HAS_H4;
+        }
+        if h3 != 0 {
+            h2 |= H2_HAS_H3;
+        }
+        if h2 != 0 {
+            h1 |= H1_HAS_H2;
+        }
+
+        out.push(h1);
+        if h2 != 0 {
+            out.push(h2);
+        }
+        if h3 != 0 {
+            out.push(h3);
+        }
+        if h4 != 0 {
+            out.push(h4);
+        }
+        out.extend_from_slice(&body[..len]);
     }
 }
 

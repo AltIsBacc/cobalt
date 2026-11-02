@@ -24,6 +24,17 @@ impl<'data> Frame<'data> {
     }
 }
 
+impl Frame<'_> {
+    pub fn write(&self, out: &mut Vec<u8>) -> ProtocolResult {
+        let len = HEADER_LEN + self.payload.len();
+        let wire_len = u16::try_from(len).map_err(|_| ProtocolError::PacketTooLarge(len))?;
+        out.extend_from_slice(&wire_len.to_le_bytes());
+        out.push(self.kind);
+        out.extend_from_slice(self.payload);
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Frames<'data> {
     data: &'data [u8],

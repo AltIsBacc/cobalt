@@ -13,6 +13,7 @@ workspace = true
 cobalt-format.workspace = true
 cobalt-protocol.workspace = true
 
+flate2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "sync", "rt", "time", "macros"] }
 

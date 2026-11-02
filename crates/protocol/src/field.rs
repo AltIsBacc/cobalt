@@ -69,6 +69,22 @@ impl<T: Encode, const N: usize> Encode for [T; N] {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Remainder<'data>(pub &'data [u8]);
+
+impl<'data> Decode<'data> for Remainder<'data> {
+    fn decode(reader: &mut Reader<'data>) -> ProtocolResult<Self> {
+        Ok(Self(reader.rest()))
+    }
+}
+
+impl Encode for Remainder<'_> {
+    fn encode(&self, writer: &mut Writer<'_>) -> ProtocolResult {
+        writer.raw(self.0);
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Color {
     pub r: u8,

@@ -1,3 +1,5 @@
+use std::mem;
+
 use crate::error::{ProtocolError, ProtocolResult};
 
 #[derive(Debug, Clone)]
@@ -37,6 +39,10 @@ impl<'data> Reader<'data> {
     pub fn string(&mut self) -> ProtocolResult<&'data str> {
         let len = self.uleb128()? as usize;
         Ok(std::str::from_utf8(self.take(len)?)?)
+    }
+
+    pub fn rest(&mut self) -> &'data [u8] {
+        mem::take(&mut self.data)
     }
 
     fn take(&mut self, len: usize) -> ProtocolResult<&'data [u8]> {

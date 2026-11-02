@@ -79,7 +79,8 @@ impl Server {
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    let current = self.engine.tick();
+                    let current = self.engine.tick(&mut self.outbox);
+                    self.flush();
                     if current != rate {
                         rate = current;
                         ticker = interval(rate);

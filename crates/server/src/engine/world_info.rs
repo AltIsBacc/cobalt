@@ -90,7 +90,7 @@ pub(super) fn build(world: &World) -> WorldInfo<'_> {
     }
 }
 
-fn narrow<T, U: TryFrom<T> + Default>(value: T) -> U {
+pub(super) fn narrow<T, U: TryFrom<T> + Default>(value: T) -> U {
     U::try_from(value).unwrap_or_default()
 }
 

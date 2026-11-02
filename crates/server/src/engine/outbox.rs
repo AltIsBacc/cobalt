@@ -20,6 +20,10 @@ impl Outbox {
         packet.write(&mut self.buffers[to.index()])
     }
 
+    pub(crate) fn relay(&mut self, to: ClientId, frames: &[u8]) {
+        self.buffers[to.index()].extend_from_slice(frames);
+    }
+
     pub(crate) fn emit(&mut self, event: Event) {
         self.events.push(event);
     }

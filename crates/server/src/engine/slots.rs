@@ -32,6 +32,16 @@ impl<T> Slots<T> {
         Ok(Some(id))
     }
 
+    pub(crate) fn get(&self, id: ClientId) -> Option<&T> {
+        self.entries.get(usize::from(id.get()))?.as_ref()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (ClientId, &T)> {
+        self.entries.iter().enumerate().filter_map(|(index, entry)| {
+            Some((ClientId::new(u8::try_from(index).ok()?), entry.as_ref()?))
+        })
+    }
+
     pub(crate) fn get_mut(&mut self, id: ClientId) -> Option<&mut T> {
         self.entries.get_mut(usize::from(id.get()))?.as_mut()
     }

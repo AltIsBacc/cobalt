@@ -1,4 +1,4 @@
-use crate::field::{Buff, BuffList, Color, SpawnPoints};
+use crate::field::{Buff, BuffList, Color, Remainder, SpawnPoints};
 use crate::text::NetworkText;
 
 define_packets! {
@@ -87,6 +87,7 @@ define_packets! {
             dungeon_y: i16,
         },
         9 Status<'data> { status_max: i32, text: NetworkText<'data>, flags: u8 },
+        10 TileSection<'data> { payload: Remainder<'data> },
         11 SectionTileFrame { start_x: i16, start_y: i16, end_x: i16, end_y: i16 },
         14 PlayerActive { player_id: u8, active: u8 },
         18 Time { day_time: bool, time: i32, sun_mod_y: i16, moon_mod_y: i16 },
@@ -168,6 +169,7 @@ define_packets! {
             prefix: u8,
             item_net_id: i16,
         },
+        13 PlayerControls<'data> { player_id: u8, rest: Remainder<'data> },
         16 PlayerHp { player_id: u8, hp: i16, max_hp: i16 },
         17 ModifyTile { action: u8, x: i16, y: i16, flags1: i16, flags2: u8 },
         19 DoorToggle { action: u8, x: i16, y: i16, direction: u8 },
