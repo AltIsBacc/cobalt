@@ -8,11 +8,10 @@ use std::mem;
 use std::time::Duration;
 
 use cobalt_format::World;
-use cobalt_protocol::c2s::{Connect, RequestEssentialTiles};
-use cobalt_protocol::s2c::{Disconnect, SetUserSlot};
-use cobalt_protocol::{Frame, NetworkText, PROTOCOL_VERSION, Packet, ProtocolResult};
+use cobalt_protocol::registry::{Disconnect, RequestEssentialTiles, SetUserSlot};
+use cobalt_protocol::{Frame, Frames, NetworkText, Packet, ProtocolError, ProtocolResult};
 
-pub(crate) use self::error::ClientError;
+use self::error::ClientError;
 pub(crate) use self::outbox::Outbox;
 use self::slots::Slots;
 use self::stage::{Absorbed, Authenticating, Stage};
@@ -23,14 +22,12 @@ use crate::event::Event;
 use crate::log::debug_log;
 use crate::status::Status;
 
-const INCOMPATIBLE_VERSION: &str = "incompatible client version";
 const SHUTTING_DOWN: &str = "the server is shutting down";
 const FULL: &str = "the server is full";
 const TILES_UNAVAILABLE: &str = "tile data is not available yet";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Admission {
-    Waiting,
     Admitted(ClientId),
     Refused(&'static str),
 }
@@ -72,6 +69,10 @@ impl Engine {
         mem::replace(&mut self.open, false)
     }
 
+    pub(crate) const fn tick_rate(&self) -> u32 {
+        self.tick_rate
+    }
+
     pub(crate) fn tick(&mut self) -> u32 {
         self.ticks += 1;
         self.tick_rate
@@ -95,24 +96,14 @@ impl Engine {
         }
     }
 
-    pub(crate) fn admit(
-        &mut self,
-        frame: Frame<'_>,
-        out: &mut Outbox,
-    ) -> ProtocolResult<Admission> {
-        if frame.kind != Connect::ID {
-            return Ok(Admission::Waiting);
-        }
-        if frame.decode_c2s::<Connect>()?.version != PROTOCOL_VERSION {
-            return Ok(Admission::Refused(INCOMPATIBLE_VERSION));
-        }
+    pub(crate) fn join(&mut self, out: &mut Outbox) -> ProtocolResult<Admission> {
         if !self.open {
             return Ok(Admission::Refused(SHUTTING_DOWN));
         }
 
         let admitted = self.slots.insert_with(|id| {
-            out.send(id, &SetUserSlot { player_id: id.get() })?;
-            Ok::<_, cobalt_protocol::ProtocolError>(Stage::Authenticating(Authenticating::new()))
+            out.send(id, SetUserSlot { player_id: id.get() }.into())?;
+            Ok::<_, ProtocolError>(Stage::Authenticating(Authenticating::new()))
         })?;
 
         Ok(match admitted {
@@ -125,6 +116,20 @@ impl Engine {
     }
 
     pub(crate) fn receive(
+        &mut self,
+        id: ClientId,
+        bytes: &[u8],
+        out: &mut Outbox,
+    ) -> Result<Flow, ClientError> {
+        for frame in Frames::new(bytes) {
+            if self.dispatch(id, frame?, out)? == Flow::Close {
+                return Ok(Flow::Close);
+            }
+        }
+        Ok(Flow::Open)
+    }
+
+    fn dispatch(
         &mut self,
         id: ClientId,
         frame: Frame<'_>,
@@ -143,12 +148,12 @@ impl Engine {
                     Ok(player) => {
                         debug_log!("{id} logged in as {}", player.name);
                         out.emit(Event::ClientLoggedIn { id });
-                        out.send(id, &world_info::build(&self.world))?;
+                        out.send(id, world_info::build(&self.world).into())?;
                         *stage = Stage::Loading;
                         Ok(Flow::Open)
                     }
                     Err(reason) => {
-                        out.send(id, &refusal(reason))?;
+                        out.send(id, refusal(reason).into())?;
                         Ok(Flow::Close)
                     }
                 },
@@ -158,7 +163,7 @@ impl Engine {
                 if frame.kind != RequestEssentialTiles::ID {
                     return Ok(Flow::Open);
                 }
-                out.send(id, &refusal(TILES_UNAVAILABLE))?;
+                out.send(id, refusal(TILES_UNAVAILABLE).into())?;
                 Ok(Flow::Close)
             }
             Stage::Closing => Ok(Flow::Close),
@@ -179,7 +184,6 @@ fn refusal(reason: &'static str) -> Disconnect<'static> {
 #[cfg(test)]
 mod tests {
     use cobalt_format::world::header::{Difficulty, Size};
-    use cobalt_protocol::write_c2s;
 
     use super::*;
 
@@ -187,18 +191,6 @@ mod tests {
         let world =
             World::try_new("test", Size::try_new(4, 4).unwrap(), Difficulty::Normal).unwrap();
         Engine::new(world, &ServerConfig { max_players, ..ServerConfig::default() })
-    }
-
-    fn frame_bytes<P: cobalt_protocol::C2s + cobalt_protocol::Encode>(packet: &P) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        write_c2s(&mut bytes, packet).unwrap();
-        bytes
-    }
-
-    fn connect(engine: &mut Engine, out: &mut Outbox, version: &str) -> Admission {
-        let bytes = frame_bytes(&Connect { version });
-        let (frame, _) = Frame::parse(&bytes).unwrap().unwrap();
-        engine.admit(frame, out).unwrap()
     }
 
     fn events(out: &mut Outbox) -> Vec<Event> {
@@ -210,21 +202,21 @@ mod tests {
     #[test]
     fn clients_join_and_leave() {
         let mut engine = engine(2);
-        let mut out = Outbox::default();
+        let mut out = Outbox::new(2);
 
-        let Admission::Admitted(a) = connect(&mut engine, &mut out, PROTOCOL_VERSION) else {
+        let Admission::Admitted(a) = engine.join(&mut out).unwrap() else {
             panic!("first client was not admitted");
         };
-        let Admission::Admitted(b) = connect(&mut engine, &mut out, PROTOCOL_VERSION) else {
+        let Admission::Admitted(b) = engine.join(&mut out).unwrap() else {
             panic!("second client was not admitted");
         };
         assert_ne!(a, b);
-        assert_eq!(connect(&mut engine, &mut out, PROTOCOL_VERSION), Admission::Refused(FULL));
+        assert_eq!(engine.join(&mut out).unwrap(), Admission::Refused(FULL));
 
         engine.release(a, &mut out);
         engine.release(a, &mut out);
         assert_eq!(engine.status(Duration::ZERO).players, 1);
-        assert_eq!(connect(&mut engine, &mut out, PROTOCOL_VERSION), Admission::Admitted(a));
+        assert_eq!(engine.join(&mut out).unwrap(), Admission::Admitted(a));
 
         assert_eq!(
             events(&mut out),

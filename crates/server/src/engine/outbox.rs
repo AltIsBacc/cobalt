@@ -1,23 +1,23 @@
-use std::ops::Range;
+use std::mem;
 
-use cobalt_protocol::{Encode, ProtocolResult, S2c, write_s2c};
+use cobalt_protocol::{ProtocolResult, S2c};
 
 use crate::client::ClientId;
 use crate::event::Event;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Outbox {
-    bytes: Vec<u8>,
-    sends: Vec<(ClientId, Range<usize>)>,
+    buffers: Box<[Vec<u8>]>,
     events: Vec<Event>,
 }
 
 impl Outbox {
-    pub(crate) fn send<P: S2c + Encode>(&mut self, to: ClientId, packet: &P) -> ProtocolResult {
-        let start = self.bytes.len();
-        write_s2c(&mut self.bytes, packet)?;
-        self.sends.push((to, start..self.bytes.len()));
-        Ok(())
+    pub(crate) fn new(clients: u8) -> Self {
+        Self { buffers: (0..clients).map(|_| Vec::new()).collect(), events: Vec::new() }
+    }
+
+    pub(crate) fn send(&mut self, to: ClientId, packet: S2c<'_>) -> ProtocolResult {
+        packet.write(&mut self.buffers[to.index()])
     }
 
     pub(crate) fn emit(&mut self, event: Event) {
@@ -26,13 +26,16 @@ impl Outbox {
 
     pub(crate) fn drain(
         &mut self,
-        mut deliver: impl FnMut(ClientId, &[u8]),
-        publish: impl FnMut(Event),
+        mut deliver: impl FnMut(ClientId, Vec<u8>),
+        mut publish: impl FnMut(Event),
     ) {
-        for (to, range) in self.sends.drain(..) {
-            deliver(to, &self.bytes[range]);
+        for (raw, buffer) in (0u8..).zip(self.buffers.iter_mut()) {
+            if !buffer.is_empty() {
+                deliver(ClientId::new(raw), mem::take(buffer));
+            }
         }
-        self.bytes.clear();
-        self.events.drain(..).for_each(publish);
+        for event in self.events.drain(..) {
+            publish(event);
+        }
     }
 }

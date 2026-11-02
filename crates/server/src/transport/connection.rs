@@ -1,27 +1,26 @@
 use std::io;
-use std::mem;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
-use cobalt_protocol::s2c::Disconnect;
-use cobalt_protocol::{Frame, NetworkText, ProtocolError, write_s2c};
+use cobalt_protocol::registry::{Connect, Disconnect};
+use cobalt_protocol::{C2s, Frame, NetworkText, PROTOCOL_VERSION, Packet, ProtocolError, S2c};
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time;
 
-use super::shared::{Queue, Shared, stopped};
+use super::hub::{Hub, Inbox, Traffic, stopped};
 use crate::client::ClientId;
-use crate::engine::{Admission, ClientError, Flow};
+use crate::engine::Admission;
 use crate::log::debug_log;
 
 const READ_CHUNK_LEN: usize = 4096;
 const WRITE_BATCH_LEN: usize = 64;
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
+const INCOMPATIBLE_VERSION: &str = "incompatible client version";
 
 #[derive(Debug, Error)]
 enum ConnectionError {
@@ -31,165 +30,164 @@ enum ConnectionError {
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
 
-    #[error(transparent)]
-    Client(#[from] ClientError),
-
     #[error("handshake timed out")]
     HandshakeTimeout,
 }
 
-type Inbox = mpsc::Receiver<Arc<[u8]>>;
-
-struct Pending {
-    writer: OwnedWriteHalf,
-    queue: Option<Queue>,
-    inbox: Inbox,
+struct Handshake {
+    version_matches: bool,
+    rest: Vec<u8>,
 }
 
-enum Link {
-    Pending(Pending),
-    Admitted { id: ClientId, writer: JoinHandle<()> },
-    Closed,
-}
-
-#[derive(Default)]
 struct Inbound {
+    reader: OwnedReadHalf,
     buffer: Vec<u8>,
-    start: usize,
 }
 
 impl Inbound {
-    fn pending(&self) -> &[u8] {
-        &self.buffer[self.start..]
+    const fn new(reader: OwnedReadHalf) -> Self {
+        Self { reader, buffer: Vec::new() }
     }
 
-    const fn advance(&mut self, used: usize) {
-        self.start += used;
-    }
-
-    fn compact(&mut self) {
-        self.buffer.drain(..self.start);
-        self.start = 0;
+    async fn read_frames(&mut self) -> Result<Option<Vec<u8>>, ConnectionError> {
         self.buffer.reserve(READ_CHUNK_LEN);
+        if self.reader.read_buf(&mut self.buffer).await? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.take_frames()?))
+    }
+
+    fn take_frames(&mut self) -> Result<Vec<u8>, ProtocolError> {
+        let mut used = 0;
+        while let Some((_, len)) = Frame::parse(&self.buffer[used..])? {
+            used += len;
+        }
+        Ok(self.buffer.drain(..used).collect())
     }
 }
 
-struct Connection {
-    shared: Arc<Shared>,
-    peer: SocketAddr,
-    reader: OwnedReadHalf,
-    link: Link,
-}
-
-pub(crate) async fn serve(socket: TcpStream, peer: SocketAddr, shared: Arc<Shared>) {
+pub(crate) async fn serve(socket: TcpStream, peer: SocketAddr, mut hub: Hub) {
     debug_log!("{peer} connected");
     if let Err(error) = socket.set_nodelay(true) {
         debug_log!("{peer} could not disable nagle: {error}");
     }
 
-    let mut shutdown = shared.shutdown_signal();
-    let mut connection = Connection::new(socket, peer, shared);
+    let (reader, mut writer) = socket.into_split();
+    let mut inbound = Inbound::new(reader);
 
-    tokio::select! {
-        () = stopped(&mut shutdown) => debug_log!("{peer} closed by shutdown"),
-        result = connection.run() => debug_log!("{peer} ended: {result:?}"),
+    let handshake = match negotiate(&mut inbound, &mut hub).await {
+        Ok(Some(handshake)) => handshake,
+        Ok(None) => return,
+        Err(error) => {
+            debug_log!("{peer} ended: {error}");
+            return;
+        }
+    };
+
+    if !handshake.version_matches {
+        refuse(&mut writer, INCOMPATIBLE_VERSION, peer).await;
+        return;
     }
 
-    connection.finish().await;
+    let (queue, inbox) = mpsc::channel(hub.outbound_capacity);
+    let (reply, admission) = oneshot::channel();
+    if hub.traffic.send(Traffic::Join { queue, reply }).await.is_err() {
+        return;
+    }
+
+    let id = match admission.await {
+        Ok(Admission::Admitted(id)) => id,
+        Ok(Admission::Refused(reason)) => {
+            refuse(&mut writer, reason, peer).await;
+            return;
+        }
+        Err(_) => return,
+    };
+
+    let mut write_task = tokio::spawn(write_loop(writer, inbox, peer));
+    let result = relay(&mut inbound, id, handshake.rest, &hub, &mut write_task).await;
+    debug_log!("{peer} ended: {result:?}");
+
+    if hub.traffic.send(Traffic::Leave { id }).await.is_err() {
+        debug_log!("{peer} left while the server was stopping");
+    }
+    if !write_task.is_finished() && time::timeout(FLUSH_TIMEOUT, &mut write_task).await.is_err() {
+        debug_log!("{peer} flush timed out");
+        write_task.abort();
+    }
+    debug_log!("{peer} left slot {id}");
 }
 
-impl Connection {
-    fn new(socket: TcpStream, peer: SocketAddr, shared: Arc<Shared>) -> Self {
-        let (reader, writer) = socket.into_split();
-        let (queue, inbox) = mpsc::channel(shared.outbound_capacity());
-        let link = Link::Pending(Pending { writer, queue: Some(queue), inbox });
+async fn negotiate(
+    inbound: &mut Inbound,
+    hub: &mut Hub,
+) -> Result<Option<Handshake>, ConnectionError> {
+    let timeout = hub.handshake_timeout;
 
-        Self { shared, peer, reader, link }
+    tokio::select! {
+        () = stopped(&mut hub.shutdown) => Ok(None),
+        result = time::timeout(timeout, await_connect(inbound)) => {
+            result.map_err(|_| ConnectionError::HandshakeTimeout)?
+        }
     }
+}
 
-    async fn run(&mut self) -> Result<(), ConnectionError> {
-        time::timeout(self.shared.handshake_timeout(), self.pump())
-            .await
-            .map_err(|_| ConnectionError::HandshakeTimeout)?
-    }
-
-    async fn pump(&mut self) -> Result<(), ConnectionError> {
-        let mut inbound = Inbound::default();
-
-        loop {
-            while let Some((frame, used)) = Frame::parse(inbound.pending())? {
-                let flow = self.deliver(frame).await?;
-                inbound.advance(used);
-                if flow == Flow::Close {
-                    return Ok(());
-                }
+async fn await_connect(inbound: &mut Inbound) -> Result<Option<Handshake>, ConnectionError> {
+    while let Some(bytes) = inbound.read_frames().await? {
+        let mut used = 0;
+        while let Some((frame, len)) = Frame::parse(&bytes[used..])? {
+            used += len;
+            if frame.kind != Connect::ID {
+                continue;
             }
-
-            inbound.compact();
-            if self.fill(&mut inbound.buffer).await? == 0 {
-                return Ok(());
+            if let Some(C2s::Connect(connect)) = C2s::decode(frame)? {
+                return Ok(Some(Handshake {
+                    version_matches: connect.version == PROTOCOL_VERSION,
+                    rest: bytes[used..].to_vec(),
+                }));
             }
         }
     }
+    Ok(None)
+}
 
-    async fn deliver(&mut self, frame: Frame<'_>) -> Result<Flow, ConnectionError> {
-        match &mut self.link {
-            Link::Admitted { id, .. } => Ok(self.shared.receive(*id, frame)?),
-            Link::Pending(pending) => match self.shared.admit(frame, &mut pending.queue)? {
-                Admission::Waiting => Ok(Flow::Open),
-                Admission::Admitted(id) => {
-                    self.promote(id);
-                    Ok(Flow::Open)
-                }
-                Admission::Refused(reason) => {
-                    self.refuse(reason).await?;
-                    Ok(Flow::Close)
-                }
-            },
-            Link::Closed => Ok(Flow::Close),
-        }
+async fn relay(
+    inbound: &mut Inbound,
+    id: ClientId,
+    first: Vec<u8>,
+    hub: &Hub,
+    write_task: &mut JoinHandle<()>,
+) -> Result<(), ConnectionError> {
+    if !first.is_empty() && hub.traffic.send(Traffic::Input { id, frames: first }).await.is_err() {
+        return Ok(());
     }
 
-    fn promote(&mut self, id: ClientId) {
-        if let Link::Pending(Pending { writer, inbox, .. }) =
-            mem::replace(&mut self.link, Link::Closed)
-        {
-            let task = tokio::spawn(write_loop(writer, inbox, self.peer));
-            self.link = Link::Admitted { id, writer: task };
+    loop {
+        let read = tokio::select! {
+            read = inbound.read_frames() => read?,
+            _ = &mut *write_task => return Ok(()),
+        };
+        let Some(frames) = read else { return Ok(()) };
+        if frames.is_empty() {
+            continue;
+        }
+        if hub.traffic.send(Traffic::Input { id, frames }).await.is_err() {
+            return Ok(());
         }
     }
+}
 
-    async fn refuse(&mut self, reason: &str) -> Result<(), ConnectionError> {
-        debug_log!("{} refused: {reason}", self.peer);
-        let Link::Pending(pending) = &mut self.link else { return Ok(()) };
+async fn refuse(writer: &mut OwnedWriteHalf, reason: &str, peer: SocketAddr) {
+    debug_log!("{peer} refused: {reason}");
 
-        let mut bytes = Vec::new();
-        write_s2c(&mut bytes, &Disconnect { reason: NetworkText::Literal(reason) })?;
-        pending.writer.write_all(&bytes).await?;
-        Ok(())
+    let packet = S2c::from(Disconnect { reason: NetworkText::Literal(reason) });
+    let mut bytes = Vec::new();
+    if let Err(error) = packet.write(&mut bytes) {
+        debug_log!("{peer} refusal could not be encoded: {error}");
+        return;
     }
-
-    async fn fill(&mut self, buffer: &mut Vec<u8>) -> Result<usize, ConnectionError> {
-        let read = self.reader.read_buf(buffer);
-
-        match &mut self.link {
-            Link::Admitted { writer, .. } => tokio::select! {
-                read = read => Ok(read?),
-                _ = writer => Ok(0),
-            },
-            _ => Ok(read.await?),
-        }
-    }
-
-    async fn finish(mut self) {
-        if let Link::Admitted { id, mut writer } = mem::replace(&mut self.link, Link::Closed) {
-            self.shared.release(id);
-            if time::timeout(FLUSH_TIMEOUT, &mut writer).await.is_err() {
-                debug_log!("{} flush timed out", self.peer);
-                writer.abort();
-            }
-            debug_log!("{} left slot {id}", self.peer);
-        }
+    if let Err(error) = writer.write_all(&bytes).await {
+        debug_log!("{peer} refusal could not be sent: {error}");
     }
 }
 
@@ -198,10 +196,19 @@ async fn write_loop(mut writer: OwnedWriteHalf, mut inbox: Inbox, peer: SocketAd
     let mut batch = Vec::new();
 
     while inbox.recv_many(&mut chunks, WRITE_BATCH_LEN).await > 0 {
-        batch.clear();
-        chunks.drain(..).for_each(|chunk| batch.extend_from_slice(&chunk));
+        let written = match chunks.as_slice() {
+            [chunk] => writer.write_all(chunk).await,
+            _ => {
+                batch.clear();
+                for chunk in &chunks {
+                    batch.extend_from_slice(chunk);
+                }
+                writer.write_all(&batch).await
+            }
+        };
+        chunks.clear();
 
-        if let Err(error) = writer.write_all(&batch).await {
+        if let Err(error) = written {
             debug_log!("{peer} write failed: {error}");
             return;
         }

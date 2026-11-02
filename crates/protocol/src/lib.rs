@@ -1,9 +1,7 @@
 #[macro_use]
 mod macros;
 
-pub mod c2s;
-pub mod s2c;
-pub mod shared;
+pub mod registry;
 
 mod codec;
 mod error;
@@ -15,6 +13,7 @@ mod text;
 pub use codec::{Reader, Writer};
 pub use error::{ProtocolError, ProtocolResult};
 pub use field::{Buff, BuffList, Color, Decode, Encode, MAX_BUFFS, SpawnPoint, SpawnPoints};
-pub use frame::{Frame, HEADER_LEN, write_c2s, write_s2c};
-pub use packet::{C2s, PROTOCOL_VERSION, Packet, S2c};
+pub use frame::{Frame, Frames, HEADER_LEN};
+pub use packet::{PROTOCOL_VERSION, Packet};
+pub use registry::{C2s, S2c};
 pub use text::NetworkText;

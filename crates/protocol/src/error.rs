@@ -22,9 +22,6 @@ pub enum ProtocolError {
     #[error("variable-length integer does not fit in 32 bits")]
     VarintOverflow,
 
-    #[error("unknown message type {0}")]
-    UnknownMessage(u8),
-
     #[error("unknown network text mode {0}")]
     UnknownTextMode(u8),
 

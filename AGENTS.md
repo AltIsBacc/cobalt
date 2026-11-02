@@ -37,3 +37,4 @@ Shared by Codex and Claude Code. Every line here should change what you do.
 
 ## Lessons
 <!-- Newest on top. Delete what no longer applies. -->
+- When delivering patches, never compile and never write tests.

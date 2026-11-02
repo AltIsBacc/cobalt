@@ -1,6 +1,6 @@
 mod connection;
+mod hub;
 mod listener;
-mod shared;
 
+pub(crate) use hub::{Hub, Queue, Traffic};
 pub(crate) use listener::Listener;
-pub(crate) use shared::{Shared, stopped};

@@ -1,8 +1,4 @@
-use cobalt_protocol::c2s::{ClientUuid, RequestWorldData};
-use cobalt_protocol::shared::{
-    PlayerHp, PlayerInfo, PlayerInventorySlot, PlayerMana, UpdatePlayerBuff,
-};
-use cobalt_protocol::{Frame, Packet};
+use cobalt_protocol::{C2s, Frame};
 
 use super::error::ClientError;
 use crate::player::{Item, Player};
@@ -29,28 +25,22 @@ impl Authenticating {
 
     pub(super) fn absorb(&mut self, frame: Frame<'_>) -> Result<Absorbed, ClientError> {
         let player = &mut self.player;
-        match frame.kind {
-            PlayerInfo::ID => player.name = frame.decode_c2s::<PlayerInfo>()?.name.to_owned(),
-            ClientUuid::ID => player.uuid = frame.decode_c2s::<ClientUuid>()?.uuid.to_owned(),
-            PlayerHp::ID => {
-                let packet = frame.decode_c2s::<PlayerHp>()?;
-                (player.hp, player.max_hp) = (packet.hp, packet.max_hp);
-            }
-            PlayerMana::ID => {
-                let packet = frame.decode_c2s::<PlayerMana>()?;
-                (player.mana, player.max_mana) = (packet.mana, packet.max_mana);
-            }
-            UpdatePlayerBuff::ID => player.buffs = frame.decode_c2s::<UpdatePlayerBuff>()?.buffs,
-            PlayerInventorySlot::ID => {
-                let packet = frame.decode_c2s::<PlayerInventorySlot>()?;
-                let item = usize::try_from(packet.slot)
+        let Some(packet) = C2s::decode(frame)? else { return Ok(Absorbed::Pending) };
+
+        match packet {
+            C2s::PlayerInfo(info) => player.name = info.name.to_owned(),
+            C2s::ClientUuid(client) => player.uuid = client.uuid.to_owned(),
+            C2s::PlayerHp(hp) => (player.hp, player.max_hp) = (hp.hp, hp.max_hp),
+            C2s::PlayerMana(mana) => (player.mana, player.max_mana) = (mana.mana, mana.max_mana),
+            C2s::UpdatePlayerBuff(buffs) => player.buffs = buffs.buffs,
+            C2s::PlayerInventorySlot(slot) => {
+                let item = usize::try_from(slot.slot)
                     .ok()
                     .and_then(|index| player.inventory.get_mut(index))
-                    .ok_or(ClientError::InvalidSlot(packet.slot))?;
-                *item =
-                    Item { stack: packet.stack, prefix: packet.prefix, net_id: packet.item_net_id };
+                    .ok_or(ClientError::InvalidSlot(slot.slot))?;
+                *item = Item { stack: slot.stack, prefix: slot.prefix, net_id: slot.item_net_id };
             }
-            RequestWorldData::ID => return Ok(Absorbed::Complete),
+            C2s::RequestWorldData(_) => return Ok(Absorbed::Complete),
             _ => {}
         }
         Ok(Absorbed::Pending)

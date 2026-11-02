@@ -1,49 +1,54 @@
-use std::fmt;
-use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::error::ServerResult;
-use crate::event::Events;
+use crate::error::{ServerError, ServerResult};
+use crate::event::{Event, Events};
 use crate::status::Status;
-use crate::transport::Shared;
 
-struct Guard(Arc<Shared>);
-
-impl Drop for Guard {
-    fn drop(&mut self) {
-        let _ = self.0.shutdown();
-    }
+pub(crate) enum Control {
+    Status(oneshot::Sender<ServerResult<Status>>),
+    SetTickRate { rate: u32, reply: oneshot::Sender<ServerResult> },
+    Shutdown(oneshot::Sender<ServerResult>),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ServerHandle {
-    guard: Arc<Guard>,
+    control: mpsc::Sender<Control>,
+    events: broadcast::Sender<Event>,
 }
 
 impl ServerHandle {
-    pub(crate) fn new(shared: Arc<Shared>) -> Self {
-        Self { guard: Arc::new(Guard(shared)) }
+    pub(crate) const fn new(
+        control: mpsc::Sender<Control>,
+        events: broadcast::Sender<Event>,
+    ) -> Self {
+        Self { control, events }
     }
 
     #[must_use]
     pub fn subscribe(&self) -> Events {
-        self.guard.0.subscribe()
+        self.events.subscribe()
     }
 
     pub async fn status(&self) -> ServerResult<Status> {
-        self.guard.0.status()
+        self.request(Control::Status).await
     }
 
     pub async fn set_tick_rate(&self, rate: u32) -> ServerResult {
-        self.guard.0.set_tick_rate(rate)
+        self.request(|reply| Control::SetTickRate { rate, reply }).await
     }
 
     pub async fn shutdown(&self) -> ServerResult {
-        self.guard.0.shutdown()
+        self.request(Control::Shutdown).await
     }
-}
 
-impl fmt::Debug for ServerHandle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ServerHandle").finish_non_exhaustive()
+    async fn request<T>(
+        &self,
+        build: impl FnOnce(oneshot::Sender<ServerResult<T>>) -> Control,
+    ) -> ServerResult<T> {
+        let (reply, response) = oneshot::channel();
+        if self.control.send(build(reply)).await.is_err() {
+            return Err(ServerError::Stopped);
+        }
+        response.await.unwrap_or(Err(ServerError::Stopped))
     }
 }

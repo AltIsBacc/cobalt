@@ -5,7 +5,7 @@ use cobalt_format::world::header::Header;
 use cobalt_format::world::header::flags::WorldFlag;
 use cobalt_format::world::header::state::OreTiers;
 use cobalt_format::world::point::Point;
-use cobalt_protocol::s2c::WorldInfo;
+use cobalt_protocol::registry::WorldInfo;
 use cobalt_protocol::{SpawnPoint, SpawnPoints};
 
 const WORLD_FLAG_BYTES: usize = 11;

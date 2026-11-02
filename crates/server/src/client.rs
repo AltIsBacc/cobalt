@@ -12,6 +12,10 @@ impl ClientId {
     pub const fn get(self) -> u8 {
         self.0
     }
+
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 impl fmt::Display for ClientId {

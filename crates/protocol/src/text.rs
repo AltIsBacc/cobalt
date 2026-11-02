@@ -98,20 +98,19 @@ impl Encode for NetworkText<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::c2s::Connect;
-    use crate::frame::{Frame, write_c2s, write_s2c};
+    use crate::frame::Frame;
     use crate::packet::PROTOCOL_VERSION;
-    use crate::s2c::Disconnect;
+    use crate::registry::{C2s, Connect, Disconnect, S2c};
 
     #[test]
     fn connect_round_trips() {
         let packet = Connect { version: PROTOCOL_VERSION };
         let mut out = Vec::new();
-        write_c2s(&mut out, &packet).unwrap();
+        C2s::from(packet.clone()).write(&mut out).unwrap();
 
         let (frame, used) = Frame::parse(&out).unwrap().unwrap();
         assert_eq!(used, out.len());
-        assert_eq!(frame.decode_c2s::<Connect>().unwrap(), packet);
+        assert_eq!(C2s::decode(frame).unwrap(), Some(C2s::Connect(packet)));
         assert_eq!(out.len(), 15);
         assert_eq!(&out[..4], &[15, 0, 1, 11]);
     }
@@ -120,11 +119,11 @@ mod tests {
     fn literal_disconnect_matches_the_wire_format() {
         let packet = Disconnect { reason: NetworkText::Literal("full") };
         let mut out = Vec::new();
-        write_s2c(&mut out, &packet).unwrap();
+        S2c::from(packet.clone()).write(&mut out).unwrap();
 
         assert_eq!(out, [9, 0, 2, 0, 4, b'f', b'u', b'l', b'l']);
         let (frame, _) = Frame::parse(&out).unwrap().unwrap();
-        assert_eq!(frame.decode_s2c::<Disconnect>().unwrap(), packet);
+        assert_eq!(S2c::decode(frame).unwrap(), Some(S2c::Disconnect(packet)));
     }
 
     #[test]
@@ -141,28 +140,28 @@ mod tests {
             },
         };
         let mut out = Vec::new();
-        write_s2c(&mut out, &packet).unwrap();
+        S2c::from(packet.clone()).write(&mut out).unwrap();
 
         let (frame, _) = Frame::parse(&out).unwrap().unwrap();
-        assert_eq!(frame.decode_s2c::<Disconnect>().unwrap(), packet);
+        assert_eq!(S2c::decode(frame).unwrap(), Some(S2c::Disconnect(packet)));
     }
 
     #[test]
-    fn unknown_messages_are_reported() {
+    fn unregistered_messages_are_skipped() {
         let frame = Frame { kind: 200, payload: &[] };
-        assert!(matches!(frame.decode_c2s::<Connect>(), Err(ProtocolError::UnknownMessage(200))));
+        assert_eq!(C2s::decode(frame).unwrap(), None);
     }
 
     #[test]
     fn truncated_payloads_are_rejected() {
         let frame = Frame { kind: 1, payload: &[11, b'T'] };
-        assert!(matches!(frame.decode_c2s::<Connect>(), Err(ProtocolError::UnexpectedEof)));
+        assert!(matches!(C2s::decode(frame), Err(ProtocolError::UnexpectedEof)));
     }
 
     #[test]
     fn unknown_text_modes_are_rejected() {
         let frame = Frame { kind: 2, payload: &[9, 0] };
-        assert!(matches!(frame.decode_s2c::<Disconnect>(), Err(ProtocolError::UnknownTextMode(9))));
+        assert!(matches!(S2c::decode(frame), Err(ProtocolError::UnknownTextMode(9))));
     }
 
     #[test]
@@ -170,6 +169,6 @@ mod tests {
         let mut payload: Vec<u8> = [1, 0, 1].repeat(usize::from(MAX_TEXT_DEPTH) + 2);
         payload.extend([0, 0]);
         let frame = Frame { kind: 2, payload: &payload };
-        assert!(matches!(frame.decode_s2c::<Disconnect>(), Err(ProtocolError::TextTooDeep)));
+        assert!(matches!(S2c::decode(frame), Err(ProtocolError::TextTooDeep)));
     }
 }

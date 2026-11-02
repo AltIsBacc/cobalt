@@ -1,7 +1,7 @@
-use crate::codec::{Reader, Writer};
+use crate::codec::Writer;
 use crate::error::{ProtocolError, ProtocolResult};
-use crate::field::{Decode, Encode};
-use crate::packet::{C2s, Packet, S2c};
+use crate::field::Encode;
+use crate::packet::Packet;
 
 pub const HEADER_LEN: usize = 3;
 
@@ -22,32 +22,38 @@ impl<'data> Frame<'data> {
 
         Ok(Some((Self { kind: frame[2], payload: &frame[HEADER_LEN..] }, len)))
     }
+}
 
-    pub fn decode_c2s<P: C2s + Decode<'data>>(&self) -> ProtocolResult<P> {
-        self.decode()
+#[derive(Debug, Clone)]
+pub struct Frames<'data> {
+    data: &'data [u8],
+}
+
+impl<'data> Frames<'data> {
+    pub const fn new(data: &'data [u8]) -> Self {
+        Self { data }
     }
+}
 
-    pub fn decode_s2c<P: S2c + Decode<'data>>(&self) -> ProtocolResult<P> {
-        self.decode()
-    }
+impl<'data> Iterator for Frames<'data> {
+    type Item = ProtocolResult<Frame<'data>>;
 
-    fn decode<P: Packet + Decode<'data>>(&self) -> ProtocolResult<P> {
-        if self.kind != P::ID {
-            return Err(ProtocolError::UnknownMessage(self.kind));
+    fn next(&mut self) -> Option<Self::Item> {
+        match Frame::parse(self.data) {
+            Ok(Some((frame, used))) => {
+                self.data = &self.data[used..];
+                Some(Ok(frame))
+            }
+            Ok(None) => None,
+            Err(error) => {
+                self.data = &[];
+                Some(Err(error))
+            }
         }
-        P::decode(&mut Reader::new(self.payload))
     }
 }
 
-pub fn write_c2s<P: C2s + Encode>(out: &mut Vec<u8>, packet: &P) -> ProtocolResult {
-    write(out, packet)
-}
-
-pub fn write_s2c<P: S2c + Encode>(out: &mut Vec<u8>, packet: &P) -> ProtocolResult {
-    write(out, packet)
-}
-
-fn write<P: Packet + Encode>(out: &mut Vec<u8>, packet: &P) -> ProtocolResult {
+pub(crate) fn write<P: Packet + Encode>(out: &mut Vec<u8>, packet: &P) -> ProtocolResult {
     let start = out.len();
     out.extend_from_slice(&[0, 0, P::ID]);
 
@@ -72,7 +78,7 @@ mod tests {
     use std::borrow::Cow;
 
     use super::*;
-    use crate::s2c::Disconnect;
+    use crate::registry::{Disconnect, S2c};
     use crate::text::NetworkText;
 
     #[test]
@@ -102,7 +108,7 @@ mod tests {
         let args = vec![NetworkText::Literal(""); 256];
         let reason = NetworkText::Formatted { text: "", args: Cow::Owned(args) };
         assert!(matches!(
-            write_s2c(&mut out, &Disconnect { reason }),
+            S2c::from(Disconnect { reason }).write(&mut out),
             Err(ProtocolError::TooManySubstitutions(256))
         ));
         assert_eq!(out, [1, 2, 3]);
@@ -110,7 +116,7 @@ mod tests {
         let long = "a".repeat(usize::from(u16::MAX));
         let reason = NetworkText::Literal(&long);
         assert!(matches!(
-            write_s2c(&mut out, &Disconnect { reason }),
+            S2c::from(Disconnect { reason }).write(&mut out),
             Err(ProtocolError::PacketTooLarge(_))
         ));
         assert_eq!(out, [1, 2, 3]);

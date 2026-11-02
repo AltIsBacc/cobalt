@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::TcpListener;
@@ -7,7 +6,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time;
 
 use super::connection;
-use super::shared::{Shared, stopped};
+use super::hub::{Hub, stopped};
 use crate::error::ServerResult;
 use crate::log::debug_log;
 
@@ -19,13 +18,13 @@ pub(crate) struct Listener {
 }
 
 impl Listener {
-    pub(crate) fn bind(addr: SocketAddr, shared: Arc<Shared>) -> ServerResult<Self> {
+    pub(crate) fn bind(addr: SocketAddr, hub: Hub) -> ServerResult<Self> {
         let listener = std::net::TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
         let listener = TcpListener::from_std(listener)?;
         let local_addr = listener.local_addr()?;
         debug_log!("listening on {local_addr}");
-        let task = tokio::spawn(accept_loop(listener, shared));
+        let task = tokio::spawn(accept_loop(listener, hub));
 
         Ok(Self { local_addr, task })
     }
@@ -39,8 +38,8 @@ impl Listener {
     }
 }
 
-async fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
-    let mut shutdown = shared.shutdown_signal();
+async fn accept_loop(listener: TcpListener, hub: Hub) {
+    let mut shutdown = hub.shutdown.clone();
     let mut connections = JoinSet::new();
 
     loop {
@@ -48,7 +47,7 @@ async fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
             () = stopped(&mut shutdown) => break,
             accepted = listener.accept() => match accepted {
                 Ok((socket, peer)) => {
-                    connections.spawn(connection::serve(socket, peer, Arc::clone(&shared)));
+                    connections.spawn(connection::serve(socket, peer, hub.clone()));
                 }
                 Err(error) => {
                     debug_log!("accept failed: {error}");
@@ -66,9 +65,8 @@ async fn accept_loop(listener: TcpListener, shared: Arc<Shared>) {
 mod tests {
     use cobalt_format::World;
     use cobalt_format::world::header::{Difficulty, Size};
-    use cobalt_protocol::c2s::Connect;
-    use cobalt_protocol::s2c::Disconnect;
-    use cobalt_protocol::{Frame, NetworkText, PROTOCOL_VERSION, write_c2s};
+    use cobalt_protocol::registry::{Connect, Disconnect};
+    use cobalt_protocol::{C2s, Frame, NetworkText, PROTOCOL_VERSION, S2c};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
@@ -99,7 +97,7 @@ mod tests {
 
     fn connect_bytes(version: &str) -> Vec<u8> {
         let mut out = Vec::new();
-        write_c2s(&mut out, &Connect { version }).unwrap();
+        C2s::from(Connect { version }).write(&mut out).unwrap();
         out
     }
 
@@ -118,10 +116,10 @@ mod tests {
             let mut buffer = Vec::new();
             loop {
                 if let Some((frame, _)) = Frame::parse(&buffer).unwrap() {
-                    return Some(match frame.decode_s2c::<Disconnect>() {
-                        Ok(Disconnect { reason: NetworkText::Literal(reason) }) => {
-                            Received::Disconnect(reason.to_owned())
-                        }
+                    return Some(match S2c::decode(frame) {
+                        Ok(Some(S2c::Disconnect(Disconnect {
+                            reason: NetworkText::Literal(reason),
+                        }))) => Received::Disconnect(reason.to_owned()),
                         _ => Received::Other(frame.kind),
                     });
                 }

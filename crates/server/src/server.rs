@@ -1,62 +1,206 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use cobalt_format::World;
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::{JoinError, JoinHandle};
-use tokio::time::{self, Interval, MissedTickBehavior};
+use tokio::time::{self, Instant, Interval, MissedTickBehavior};
 
 use crate::config::ServerConfig;
-use crate::error::ServerResult;
-use crate::handle::ServerHandle;
-use crate::transport::{Listener, Shared, stopped};
+use crate::engine::{Admission, Engine, Flow, Outbox};
+use crate::error::{ServerError, ServerResult};
+use crate::event::Event;
+use crate::handle::{Control, ServerHandle};
+use crate::log::debug_log;
+use crate::status::Status;
+use crate::transport::{Hub, Listener, Queue, Traffic};
+
+const CONTROL_CAPACITY: usize = 8;
+const TRAFFIC_CAPACITY: usize = 1024;
+const INTERNAL_ERROR: &str = "internal server error";
 
 pub struct Server {
-    shared: Arc<Shared>,
-    tick_rate: u32,
+    engine: Engine,
+    outbox: Outbox,
+    queues: Box<[Option<Queue>]>,
+    control: mpsc::Receiver<Control>,
+    traffic: mpsc::Receiver<Traffic>,
+    events: broadcast::Sender<Event>,
+    shutdown: watch::Sender<bool>,
+    hub: Hub,
+    started: Instant,
 }
 
 impl Server {
     pub fn try_new(world: World, config: ServerConfig) -> ServerResult<(Self, ServerHandle)> {
         config.validate()?;
 
-        let shared = Arc::new(Shared::new(world, &config));
-        let handle = ServerHandle::new(Arc::clone(&shared));
+        let (control_tx, control) = mpsc::channel(CONTROL_CAPACITY);
+        let (traffic_tx, traffic) = mpsc::channel(TRAFFIC_CAPACITY);
+        let (events, _) = broadcast::channel(config.event_capacity);
+        let (shutdown, shutdown_signal) = watch::channel(false);
 
-        Ok((Self { shared, tick_rate: config.tick_rate }, handle))
+        let server = Self {
+            engine: Engine::new(world, &config),
+            outbox: Outbox::new(config.max_players),
+            queues: (0..config.max_players).map(|_| None).collect(),
+            control,
+            traffic,
+            events: events.clone(),
+            shutdown,
+            hub: Hub {
+                traffic: traffic_tx,
+                shutdown: shutdown_signal,
+                handshake_timeout: config.handshake_timeout,
+                outbound_capacity: config.outbound_capacity,
+            },
+            started: Instant::now(),
+        };
+
+        Ok((server, ServerHandle::new(control_tx, events)))
     }
 
     pub fn spawn(world: World, config: ServerConfig) -> ServerResult<RunningServer> {
         let (server, handle) = Self::try_new(world, config)?;
         let listener = config
             .listen
-            .map(|addr| Listener::bind(addr, Arc::clone(&server.shared)))
+            .map(|addr| Listener::bind(addr, server.hub.clone()))
             .transpose()?;
         let task = tokio::spawn(server.run());
 
         Ok(RunningServer { handle, task, listener })
     }
 
-    pub async fn run(self) {
-        let mut shutdown = self.shared.shutdown_signal();
-        let mut rate = self.tick_rate;
+    pub async fn run(mut self) {
+        let mut rate = self.engine.tick_rate();
         let mut ticker = interval(rate);
+        let mut controlled = true;
 
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    let current = self.shared.tick();
+                    let current = self.engine.tick();
                     if current != rate {
                         rate = current;
                         ticker = interval(rate);
                     }
                 }
-                () = stopped(&mut shutdown) => break,
+                control = self.control.recv(), if controlled => match control {
+                    Some(control) => self.on_control(control),
+                    None => {
+                        controlled = false;
+                        self.close();
+                    }
+                },
+                Some(traffic) = self.traffic.recv() => self.on_traffic(traffic),
+            }
+
+            if !self.engine.is_open() && self.engine.is_empty() {
+                break;
             }
         }
 
-        self.shared.drained().await;
-        self.shared.publish_stopped();
+        debug_log!("event: {:?}", Event::Stopped);
+        let _ = self.events.send(Event::Stopped);
+    }
+
+    fn on_control(&mut self, control: Control) {
+        match control {
+            Control::Status(reply) => {
+                let _ = reply.send(self.status());
+            }
+            Control::SetTickRate { rate, reply } => {
+                let _ = reply.send(self.set_tick_rate(rate));
+            }
+            Control::Shutdown(reply) => {
+                let closed = self.close();
+                let _ = reply.send(if closed { Ok(()) } else { Err(ServerError::Stopped) });
+            }
+        }
+    }
+
+    fn on_traffic(&mut self, traffic: Traffic) {
+        let closing = match traffic {
+            Traffic::Join { queue, reply } => {
+                let _ = reply.send(self.join(queue));
+                None
+            }
+            Traffic::Input { id, frames } => {
+                let flow = match self.engine.receive(id, &frames, &mut self.outbox) {
+                    Ok(flow) => flow,
+                    Err(error) => {
+                        debug_log!("{id} dropped: {error}");
+                        Flow::Close
+                    }
+                };
+                (flow == Flow::Close).then_some(id)
+            }
+            Traffic::Leave { id } => {
+                self.queues[id.index()] = None;
+                self.engine.release(id, &mut self.outbox);
+                None
+            }
+        };
+
+        self.flush();
+        if let Some(id) = closing {
+            self.queues[id.index()] = None;
+        }
+    }
+
+    fn join(&mut self, queue: Queue) -> Admission {
+        match self.engine.join(&mut self.outbox) {
+            Ok(Admission::Admitted(id)) => {
+                self.queues[id.index()] = Some(queue);
+                Admission::Admitted(id)
+            }
+            Ok(refused) => refused,
+            Err(error) => {
+                debug_log!("join failed: {error}");
+                Admission::Refused(INTERNAL_ERROR)
+            }
+        }
+    }
+
+    fn flush(&mut self) {
+        let Self { outbox, queues, events, .. } = self;
+
+        outbox.drain(
+            |to, bytes| {
+                let slot = &mut queues[to.index()];
+                if slot.as_ref().is_some_and(|queue| queue.try_send(bytes).is_err()) {
+                    debug_log!("{to} dropped: outbound queue is full or closed");
+                    *slot = None;
+                }
+            },
+            |event| {
+                debug_log!("event: {event:?}");
+                let _ = events.send(event);
+            },
+        );
+    }
+
+    fn close(&mut self) -> bool {
+        let was_open = self.engine.close();
+        if was_open {
+            self.queues.fill_with(|| None);
+            self.shutdown.send_replace(true);
+        }
+        was_open
+    }
+
+    fn status(&self) -> ServerResult<Status> {
+        if !self.engine.is_open() {
+            return Err(ServerError::Stopped);
+        }
+        Ok(self.engine.status(self.started.elapsed()))
+    }
+
+    fn set_tick_rate(&mut self, rate: u32) -> ServerResult {
+        if !self.engine.is_open() {
+            return Err(ServerError::Stopped);
+        }
+        self.engine.set_tick_rate(rate)
     }
 }
 
