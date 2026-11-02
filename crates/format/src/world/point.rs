@@ -1,4 +1,5 @@
-use crate::{error::Result, reader::Reader};
+use crate::error::Result;
+use crate::reader::Reader;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Point {

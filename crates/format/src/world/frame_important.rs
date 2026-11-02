@@ -1,6 +1,7 @@
 use std::fmt;
 
-use crate::{error::Result, reader::Reader};
+use crate::error::Result;
+use crate::reader::Reader;
 
 #[derive(Default, Clone, PartialEq, Eq)]
 pub struct FrameImportant(Box<[bool]>);
@@ -9,10 +10,11 @@ impl FrameImportant {
     pub fn read(reader: &mut Reader<'_>) -> Result<Self> {
         let count = usize::from(reader.u16()?);
         let bytes = reader.take(count.div_ceil(8))?;
-        let flags = (0..count).map(|i| ((bytes[i / 8] >> (i % 8)) & 1) != 0).collect();
+        let flags: Box<[bool]> = (0..count).map(|i| ((bytes[i / 8] >> (i % 8)) & 1) != 0).collect();
         Ok(Self(flags))
     }
 
+    #[must_use]
     pub fn contains(&self, id: u16) -> bool {
         self.0.get(usize::from(id)).copied().unwrap_or(false)
     }

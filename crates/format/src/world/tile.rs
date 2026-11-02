@@ -1,4 +1,6 @@
-use crate::{error::Result, reader::Reader, world::frame_important::FrameImportant};
+use crate::error::Result;
+use crate::reader::Reader;
+use crate::world::frame_important::FrameImportant;
 
 pub mod block;
 pub mod liquid;
@@ -139,10 +141,9 @@ impl Tile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        error::Error,
-        world::{header::Size, tiles::Tiles},
-    };
+    use crate::error::Error;
+    use crate::world::header::Size;
+    use crate::world::tiles::Tiles;
 
     fn read(bytes: &[u8], frame_important: &FrameImportant) -> Result<(Tile, usize)> {
         Tile::read(&mut Reader::new(bytes), frame_important)
@@ -157,11 +158,12 @@ mod tests {
 
     #[test]
     fn decodes_wide_block_ids_and_paint() {
-        let bytes = [H1_HAS_H2 | H1_ACTIVE | H1_WIDE_BLOCK, H2_HAS_H3, H3_BLOCK_PAINT, 0x2C, 0x01, 9];
+        let bytes =
+            [H1_HAS_H2 | H1_ACTIVE | H1_WIDE_BLOCK, H2_HAS_H3, H3_BLOCK_PAINT, 0x2c, 0x01, 9];
         let (tile, _) = read(&bytes, &FrameImportant::default()).unwrap();
         let block = tile.block.unwrap();
 
-        assert_eq!(block.id, 0x012C);
+        assert_eq!(block.id, 0x012c);
         assert_eq!(block.paint, Paint(9));
         assert!(tile.wall.is_none());
     }
@@ -199,8 +201,8 @@ mod tests {
     #[test]
     fn decodes_both_rle_widths() {
         let (_, short) = read(&[1 << H1_RLE_SHIFT, 200], &FrameImportant::default()).unwrap();
-        let (_, long) = read(&[2 << H1_RLE_SHIFT, 0x2C, 0x01], &FrameImportant::default()).unwrap();
-        let (_, wide) = read(&[3 << H1_RLE_SHIFT, 0x2C, 0x01], &FrameImportant::default()).unwrap();
+        let (_, long) = read(&[2 << H1_RLE_SHIFT, 0x2c, 0x01], &FrameImportant::default()).unwrap();
+        let (_, wide) = read(&[3 << H1_RLE_SHIFT, 0x2c, 0x01], &FrameImportant::default()).unwrap();
 
         assert_eq!((short, long, wide), (200, 300, 300));
     }
@@ -209,8 +211,8 @@ mod tests {
     fn tiles_expand_runs_within_columns() {
         let bytes = [H1_ACTIVE | (1 << H1_RLE_SHIFT), 5, 2, 1 << H1_RLE_SHIFT, 2];
         let mut reader = Reader::new(&bytes);
-        let tiles = Tiles::read(&mut reader, Size::new(2, 3).unwrap(), &FrameImportant::default())
-            .unwrap();
+        let size = Size::try_new(2, 3).unwrap();
+        let tiles = Tiles::read(&mut reader, size, &FrameImportant::default()).unwrap();
 
         assert_eq!(reader.remaining(), 0);
         assert_eq!(tiles.as_slice().len(), 6);
@@ -225,8 +227,8 @@ mod tests {
     fn tiles_clamp_runs_at_column_end() {
         let bytes = [1 << H1_RLE_SHIFT, 250, 0, 0];
         let mut reader = Reader::new(&bytes);
-        let tiles = Tiles::read(&mut reader, Size::new(2, 2).unwrap(), &FrameImportant::default())
-            .unwrap();
+        let size = Size::try_new(2, 2).unwrap();
+        let tiles = Tiles::read(&mut reader, size, &FrameImportant::default()).unwrap();
 
         assert_eq!(tiles.as_slice().len(), 4);
         assert_eq!(reader.remaining(), 0);
@@ -237,7 +239,7 @@ mod tests {
         let bytes = [H1_ACTIVE];
         let result = Tiles::read(
             &mut Reader::new(&bytes),
-            Size::new(1, 1).unwrap(),
+            Size::try_new(1, 1).unwrap(),
             &FrameImportant::default(),
         );
         assert!(matches!(result, Err(Error::UnexpectedEof { .. })));

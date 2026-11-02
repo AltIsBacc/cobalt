@@ -1,7 +1,5 @@
-use crate::{
-    error::{Error, Result},
-    reader::Reader,
-};
+use crate::error::{Error, Result};
+use crate::reader::Reader;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Sections {

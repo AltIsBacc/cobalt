@@ -1,12 +1,11 @@
 use enumflags2::{BitFlags, bitflags};
 use num_enum::TryFromPrimitive;
 
-use crate::{
-    error::{Error, Result},
-    reader::Reader,
-};
+use crate::error::{Error, Result};
+use crate::reader::Reader;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[non_exhaustive]
 #[repr(i32)]
 pub enum SaveVersion {
     V1_4_5_6 = 319,
@@ -19,6 +18,7 @@ pub enum SaveSignature {
 }
 
 impl SaveSignature {
+    #[must_use]
     pub const fn from_bytes(bytes: &[u8; 7]) -> Option<Self> {
         match bytes {
             b"relogic" => Some(Self::Relogic),
@@ -56,13 +56,14 @@ pub struct SaveMetadata {
 impl SaveMetadata {
     pub fn read(reader: &mut Reader<'_>) -> Result<Self> {
         let version = SaveVersion::try_from(reader.i32()?)
-            .map_err(|e| Error::UnsupportedVersion(e.number))?;
+            .map_err(|error| Error::UnsupportedVersion(error.number))?;
 
         let raw_signature = reader.array::<7>()?;
         let signature = SaveSignature::from_bytes(&raw_signature)
             .ok_or(Error::UnknownSignature(raw_signature))?;
 
-        let kind = SaveKind::try_from(reader.u8()?).map_err(|e| Error::UnknownKind(e.number))?;
+        let kind = SaveKind::try_from(reader.u8()?)
+            .map_err(|error| Error::UnknownKind(error.number))?;
         let revisions = reader.i32()?;
         let flags = BitFlags::from_bits_truncate(reader.u64()?);
 

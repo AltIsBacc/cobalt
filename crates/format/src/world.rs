@@ -1,12 +1,11 @@
-use std::{fs, path::Path};
+use std::fs;
+use std::path::Path;
 
 use enumflags2::BitFlags;
 
-use crate::{
-    error::{Error, Result},
-    metadata::{SaveKind, SaveMetadata, SaveSignature, SaveVersion},
-    reader::Reader,
-};
+use crate::error::{Error, Result};
+use crate::metadata::{SaveKind, SaveMetadata, SaveSignature, SaveVersion};
+use crate::reader::Reader;
 
 pub mod chest;
 pub mod footer;
@@ -54,7 +53,7 @@ fn expect_at(reader: &Reader<'_>, section: &'static str, expected: usize) -> Res
 }
 
 impl World {
-    pub fn new(name: impl Into<String>, size: Size, difficulty: Difficulty) -> Result<Self> {
+    pub fn try_new(name: impl Into<String>, size: Size, difficulty: Difficulty) -> Result<Self> {
         Ok(Self {
             metadata: SaveMetadata {
                 version: SaveVersion::V1_4_5_6,
@@ -65,7 +64,7 @@ impl World {
             },
             sections: Sections::default(),
             frame_important: FrameImportant::default(),
-            header: Header::new(name, size, difficulty)?,
+            header: Header::try_new(name, size, difficulty)?,
             tiles: Tiles::new(size),
             chests: Vec::new(),
             signs: Vec::new(),
@@ -202,7 +201,7 @@ mod tests {
         assert_eq!(world.header.name, "w");
         assert_eq!(world.header.id, 7);
         assert_eq!(world.header.difficulty, Difficulty::Expert);
-        assert_eq!(world.header.size, Size::new(1, 2).unwrap());
+        assert_eq!(world.header.size, Size::try_new(1, 2).unwrap());
         assert_eq!(world.tiles.size(), world.header.size);
         assert!(world.tiles.get(0, 1).is_some());
         assert!(world.tiles.get(1, 0).is_none());
@@ -210,8 +209,8 @@ mod tests {
 
     #[test]
     fn creates_an_empty_world() {
-        let size = Size::new(4, 3).unwrap();
-        let world = World::new("fresh", size, Difficulty::Master).unwrap();
+        let size = Size::try_new(4, 3).unwrap();
+        let world = World::try_new("fresh", size, Difficulty::Master).unwrap();
 
         assert_eq!(world.header.name, "fresh");
         assert_eq!(world.header.difficulty, Difficulty::Master);
@@ -223,9 +222,9 @@ mod tests {
 
     #[test]
     fn rejects_overlong_world_names() {
-        let size = Size::new(1, 1).unwrap();
+        let size = Size::try_new(1, 1).unwrap();
         assert!(matches!(
-            World::new("x".repeat(28), size, Difficulty::Normal),
+            World::try_new("x".repeat(28), size, Difficulty::Normal),
             Err(Error::NameTooLong { len: 28, max: 27 })
         ));
     }

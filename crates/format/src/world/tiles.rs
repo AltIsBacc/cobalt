@@ -1,10 +1,10 @@
 use std::fmt;
 
-use crate::{
-    error::Result,
-    reader::Reader,
-    world::{frame_important::FrameImportant, header::Size, tile::Tile},
-};
+use crate::error::Result;
+use crate::reader::Reader;
+use crate::world::frame_important::FrameImportant;
+use crate::world::header::Size;
+use crate::world::tile::Tile;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Tiles {
@@ -37,18 +37,22 @@ impl Tiles {
         Ok(Self { size, data })
     }
 
+    #[must_use]
     pub const fn size(&self) -> Size {
         self.size
     }
 
+    #[must_use]
     pub fn get(&self, x: usize, y: usize) -> Option<&Tile> {
         self.index(x, y).and_then(|i| self.data.get(i))
     }
 
+    #[must_use]
     pub fn get_mut(&mut self, x: usize, y: usize) -> Option<&mut Tile> {
         self.index(x, y).and_then(|i| self.data.get_mut(i))
     }
 
+    #[must_use]
     pub fn as_slice(&self) -> &[Tile] {
         &self.data
     }

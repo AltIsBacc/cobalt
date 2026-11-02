@@ -1,4 +1,6 @@
-use crate::{error::Result, reader::Reader, world::item::Item};
+use crate::error::Result;
+use crate::reader::Reader;
+use crate::world::item::Item;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chest {

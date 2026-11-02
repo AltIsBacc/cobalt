@@ -1,4 +1,5 @@
-use std::{io, str::Utf8Error};
+use std::io;
+use std::str::Utf8Error;
 
 use thiserror::Error;
 
@@ -7,6 +8,7 @@ use crate::metadata::SaveKind;
 pub type Result<T = ()> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("unexpected end of data at {pos}: requested {requested} bytes, {available} available")]
     UnexpectedEof { pos: usize, requested: usize, available: usize },

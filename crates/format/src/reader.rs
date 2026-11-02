@@ -3,8 +3,8 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone)]
-pub struct Reader<'a> {
-    data: &'a [u8],
+pub struct Reader<'data> {
+    data: &'data [u8],
     pos: usize,
 }
 
@@ -18,15 +18,17 @@ macro_rules! read_int {
     };
 }
 
-impl<'a> Reader<'a> {
-    pub const fn new(data: &'a [u8]) -> Self {
+impl<'data> Reader<'data> {
+    pub const fn new(data: &'data [u8]) -> Self {
         Self { data, pos: 0 }
     }
 
+    #[must_use]
     pub const fn pos(&self) -> usize {
         self.pos
     }
 
+    #[must_use]
     pub const fn remaining(&self) -> usize {
         self.data.len() - self.pos
     }
@@ -39,7 +41,7 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
-    pub fn take(&mut self, len: usize) -> Result<&'a [u8]> {
+    pub fn take(&mut self, len: usize) -> Result<&'data [u8]> {
         let available = self.remaining();
         if len > available {
             return Err(Error::UnexpectedEof { pos: self.pos, requested: len, available });
@@ -104,8 +106,8 @@ impl<'a> Reader<'a> {
         let mut value = 0u32;
         for shift in (0u32..35).step_by(7) {
             let byte = self.u8()?;
-            let bits = u32::from(byte & 0x7F);
-            if shift == 28 && bits > 0x0F {
+            let bits = u32::from(byte & 0x7f);
+            if shift == 28 && bits > 0x0f {
                 return Err(Error::VarintOverflow);
             }
             value |= bits << shift;
@@ -132,7 +134,7 @@ mod tests {
 
     #[test]
     fn reads_little_endian_integers() {
-        let mut reader = Reader::new(&[0x34, 0x12, 0xFF, 0xFF, 0xFF, 0xFF]);
+        let mut reader = Reader::new(&[0x34, 0x12, 0xff, 0xff, 0xff, 0xff]);
         assert_eq!(reader.u16().unwrap(), 0x1234);
         assert_eq!(reader.i32().unwrap(), -1);
         assert_eq!(reader.remaining(), 0);
@@ -150,10 +152,10 @@ mod tests {
 
     #[test]
     fn decodes_uleb128() {
-        assert_eq!(Reader::new(&[0xE5, 0x8E, 0x26]).uleb128_u32().unwrap(), 624_485);
-        assert_eq!(Reader::new(&[0xFF, 0xFF, 0xFF, 0xFF, 0x0F]).uleb128_u32().unwrap(), u32::MAX);
+        assert_eq!(Reader::new(&[0xe5, 0x8e, 0x26]).uleb128_u32().unwrap(), 624_485);
+        assert_eq!(Reader::new(&[0xff, 0xff, 0xff, 0xff, 0x0f]).uleb128_u32().unwrap(), u32::MAX);
         assert!(matches!(
-            Reader::new(&[0xFF, 0xFF, 0xFF, 0xFF, 0x1F]).uleb128_u32(),
+            Reader::new(&[0xff, 0xff, 0xff, 0xff, 0x1f]).uleb128_u32(),
             Err(Error::VarintOverflow)
         ));
         assert!(matches!(
@@ -171,7 +173,7 @@ mod tests {
             Err(Error::UnexpectedEof { .. })
         ));
         assert!(matches!(
-            Reader::new(&[1, 0xFF]).string(),
+            Reader::new(&[1, 0xff]).string(),
             Err(Error::InvalidString(_))
         ));
     }

@@ -1,10 +1,8 @@
 use num_enum::TryFromPrimitive;
 
-use crate::{
-    error::{Error, Result},
-    reader::Reader,
-    world::item::Item,
-};
+use crate::error::{Error, Result};
+use crate::reader::Reader;
+use crate::world::item::Item;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
@@ -91,7 +89,8 @@ pub enum TileEntityData {
 
 impl TileEntityData {
     fn read(reader: &mut Reader<'_>, kind: u8) -> Result<Self> {
-        let kind = Kind::try_from(kind).map_err(|e| Error::UnknownTileEntity(e.number))?;
+        let kind = Kind::try_from(kind)
+            .map_err(|error| Error::UnknownTileEntity(error.number))?;
         Ok(match kind {
             Kind::TrainingDummy => Self::TrainingDummy { npc: reader.i16()? },
             Kind::ItemFrame => Self::ItemFrame(Item::read_entity_slot(reader)?),

@@ -212,7 +212,7 @@ mod tests {
     use crate::event::Events;
 
     fn world() -> World {
-        World::new("test", Size::new(4, 4).unwrap(), Difficulty::Normal).unwrap()
+        World::try_new("test", Size::try_new(4, 4).unwrap(), Difficulty::Normal).unwrap()
     }
 
     fn config(max_players: u8) -> ServerConfig {

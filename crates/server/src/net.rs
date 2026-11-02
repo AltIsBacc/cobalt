@@ -109,7 +109,8 @@ mod tests {
     }
 
     fn start(config: ServerConfig) -> RunningServer {
-        let world = World::new("net", Size::new(1, 1).unwrap(), Difficulty::Normal).unwrap();
+        let size = Size::try_new(1, 1).unwrap();
+        let world = World::try_new("net", size, Difficulty::Normal).unwrap();
         Server::spawn(world, listening(config)).unwrap()
     }
 
@@ -277,7 +278,8 @@ mod tests {
     #[tokio::test]
     async fn binding_an_occupied_address_fails() {
         let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let world = World::new("net", Size::new(1, 1).unwrap(), Difficulty::Normal).unwrap();
+        let size = Size::try_new(1, 1).unwrap();
+        let world = World::try_new("net", size, Difficulty::Normal).unwrap();
         let config = ServerConfig { listen: occupied.local_addr().ok(), ..ServerConfig::default() };
 
         assert!(matches!(Server::spawn(world, config), Err(ServerError::Io(_))));

@@ -1,4 +1,6 @@
-use crate::{error::Result, reader::Reader, world::point::Point};
+use crate::error::Result;
+use crate::reader::Reader;
+use crate::world::point::Point;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TownNpc {

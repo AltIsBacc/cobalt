@@ -3,11 +3,9 @@ use std::collections::BTreeSet;
 use num_enum::TryFromPrimitive;
 use uuid::Uuid;
 
-use crate::{
-    error::{Error, Result},
-    reader::Reader,
-    world::point::Point,
-};
+use crate::error::{Error, Result};
+use crate::reader::Reader;
+use crate::world::point::Point;
 
 pub mod flags;
 pub mod state;
@@ -48,7 +46,7 @@ pub struct Size {
 impl Size {
     pub const MAX_TILES: usize = 25_000_000;
 
-    pub fn new(width: i32, height: i32) -> Result<Self> {
+    pub fn try_new(width: i32, height: i32) -> Result<Self> {
         match (usize::try_from(width), usize::try_from(height)) {
             (Ok(w), Ok(h)) if w.checked_mul(h).is_some_and(|n| n <= Self::MAX_TILES) => {
                 Ok(Self { width: w, height: h })
@@ -57,6 +55,7 @@ impl Size {
         }
     }
 
+    #[must_use]
     pub const fn area(self) -> usize {
         self.width * self.height
     }
@@ -113,7 +112,7 @@ fn read_flags(
 impl Header {
     pub const MAX_NAME_LEN: usize = 27;
 
-    pub fn new(name: impl Into<String>, size: Size, difficulty: Difficulty) -> Result<Self> {
+    pub fn try_new(name: impl Into<String>, size: Size, difficulty: Difficulty) -> Result<Self> {
         let name = name.into();
         Self::check_name(&name)?;
 
@@ -164,10 +163,10 @@ impl Header {
 
         let height = reader.i32()?;
         let width = reader.i32()?;
-        let size = Size::new(width, height)?;
+        let size = Size::try_new(width, height)?;
 
         let difficulty = Difficulty::try_from(reader.i32()?)
-            .map_err(|e| Error::UnknownDifficulty(e.number))?;
+            .map_err(|error| Error::UnknownDifficulty(error.number))?;
 
         let mut flags = BTreeSet::new();
         read_flags(
@@ -437,10 +436,10 @@ mod tests {
 
     #[test]
     fn size_rejects_negative_and_oversized_worlds() {
-        assert!(Size::new(8400, 2400).is_ok());
-        assert!(Size::new(0, 0).is_ok());
-        assert!(matches!(Size::new(-1, 10), Err(Error::InvalidSize { .. })));
-        assert!(matches!(Size::new(10, -1), Err(Error::InvalidSize { .. })));
-        assert!(matches!(Size::new(i32::MAX, i32::MAX), Err(Error::InvalidSize { .. })));
+        assert!(Size::try_new(8400, 2400).is_ok());
+        assert!(Size::try_new(0, 0).is_ok());
+        assert!(matches!(Size::try_new(-1, 10), Err(Error::InvalidSize { .. })));
+        assert!(matches!(Size::try_new(10, -1), Err(Error::InvalidSize { .. })));
+        assert!(matches!(Size::try_new(i32::MAX, i32::MAX), Err(Error::InvalidSize { .. })));
     }
 }
