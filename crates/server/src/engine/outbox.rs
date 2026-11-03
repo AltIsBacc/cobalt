@@ -19,6 +19,13 @@ impl Outbox {
         packet.write(&mut self.buffers[to.index()])
     }
 
+    pub(crate) fn broadcast(&mut self, packet: S2c<'_>, except: Option<&[ClientId]>) -> ProtocolResult {
+        self.buffers.iter_mut()
+            .enumerate()
+            .filter(|&(idx, _)| except.map_or(true, |ex| !ex.contains(&ClientId::new(idx as u8))))
+            .try_for_each(|(_, client_buf)| packet.write(client_buf))
+    }
+
     pub(crate) fn relay(&mut self, to: ClientId, frames: &[u8]) {
         self.buffers[to.index()].extend_from_slice(frames);
     }

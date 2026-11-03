@@ -3,8 +3,10 @@ mod chest;
 mod clock;
 mod dispatch;
 mod error;
+mod npcs;
 mod outbox;
 mod presence;
+mod schedule;
 mod section;
 mod sign;
 mod slots;
@@ -20,10 +22,11 @@ use cobalt_format::World;
 use cobalt_protocol::registry::{PlayerActive, SetUserSlot};
 use cobalt_protocol::{ProtocolError, ProtocolResult};
 
-use self::clock::Clock;
+use self::clock::{AdvanceClock, SyncClock};
 pub(crate) use self::outbox::Outbox;
-use self::slots::Slots;
+use self::schedule::{Phase, Schedule};
 use self::stage::{Authenticating, Stage};
+use self::state::State;
 use crate::config::{self, ServerConfig};
 use crate::error::ServerResult;
 use crate::log::debug_log;
@@ -45,22 +48,18 @@ pub(crate) enum Flow {
 }
 
 pub(crate) struct Engine {
-    world: World,
-    clock: Clock,
-    slots: Slots<Stage>,
-    tick_rate: u32,
-    ticks: u64,
+    state: State,
+    schedule: Schedule,
     open: bool,
 }
 
 impl Engine {
     pub(crate) fn new(world: World, config: &ServerConfig) -> Self {
         Self {
-            clock: Clock::new(&world),
-            world,
-            slots: Slots::new(config.max_players),
-            tick_rate: config.tick_rate,
-            ticks: 0,
+            state: State::new(world, config),
+            schedule: Schedule::default()
+                .with(Phase::Update, AdvanceClock)
+                .with(Phase::Sync, SyncClock),
             open: true,
         }
     }
@@ -70,7 +69,7 @@ impl Engine {
     }
 
     pub(crate) const fn is_empty(&self) -> bool {
-        self.slots.len() == 0
+        self.state.slots.len() == 0
     }
 
     pub(crate) fn close(&mut self) -> bool {
@@ -78,35 +77,24 @@ impl Engine {
     }
 
     pub(crate) const fn tick_rate(&self) -> u32 {
-        self.tick_rate
+        self.state.tick_rate
     }
 
     pub(crate) fn tick(&mut self, out: &mut Outbox) -> u32 {
-        self.ticks += 1;
-
-        self.clock.tick_clock();
-        if self.clock.advance(self.tick_rate) {
-            self.broadcast(self.clock.packet().into(), None, out);
-        }
-        self.tick_rate
+        self.state.ticks += 1;
+        self.schedule.run(&mut self.state, out);
+        self.state.tick_rate
     }
 
     pub(crate) fn set_tick_rate(&mut self, rate: u32) -> ServerResult {
         config::validate_tick_rate(rate)?;
-        self.tick_rate = rate;
+        self.state.tick_rate = rate;
         debug_log!("tick rate set to {rate}");
         Ok(())
     }
 
     pub(crate) fn status(&self, uptime: Duration) -> Status {
-        Status {
-            world_name: self.world.header.name.clone(),
-            players: self.slots.len(),
-            max_players: self.slots.capacity(),
-            tick_rate: self.tick_rate,
-            ticks: self.ticks,
-            uptime,
-        }
+        self.state.status(uptime)
     }
 
     pub(crate) fn join(&mut self, out: &mut Outbox) -> ProtocolResult<Admission> {
@@ -114,7 +102,7 @@ impl Engine {
             return Ok(Admission::Refused(SHUTTING_DOWN));
         }
 
-        let admitted = self.slots.insert_with(|id| {
+        let admitted = self.state.slots.insert_with(|id| {
             out.send(id, SetUserSlot { player_id: id.get() }.into())?;
             Ok::<_, ProtocolError>(Stage::Authenticating(Authenticating::new()))
         })?;
@@ -129,9 +117,9 @@ impl Engine {
     }
 
     pub(crate) fn release(&mut self, id: ClientId, out: &mut Outbox) {
-        let Some(stage) = self.slots.remove(id) else { return };
+        let Some(stage) = self.state.slots.remove(id) else { return };
         if matches!(stage, Stage::Playing(_)) {
-            self.broadcast(PlayerActive { player_id: id.get(), active: 0 }.into(), None, out);
+            self.state.broadcast(PlayerActive { player_id: id.get(), active: 0 }.into(), None, out);
         }
         out.emit(Event::ClientLeft { id });
     }

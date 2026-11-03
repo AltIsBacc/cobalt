@@ -3,14 +3,14 @@ use cobalt_protocol::registry::NetModule;
 use cobalt_protocol::{Color, Decode, Encode, NetworkText, Reader, Remainder, Writer};
 
 use super::error::ClientError;
-use super::{Engine, Outbox};
+use super::{Outbox, State};
 use crate::model::ClientId;
 
 const SAY: &str = "Say";
 const MAX_CHAT_BYTES: usize = 512;
 const WHITE: Color = Color { r: 255, g: 255, b: 255 };
 
-impl Engine {
+impl State {
     pub(super) fn handle_module(
         &self,
         id: ClientId,

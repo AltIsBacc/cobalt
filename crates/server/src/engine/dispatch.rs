@@ -9,7 +9,7 @@ use cobalt_protocol::{C2s, Frame, Frames, NetworkText, Packet};
 use super::error::ClientError;
 use super::presence::attributed;
 use super::stage::{Absorbed, Stage, remember};
-use super::{Engine, Flow, Outbox, section, world_info};
+use super::{Engine, Flow, Outbox, State, section, world_info};
 use crate::log::debug_log;
 use crate::model::{ClientId, Event};
 
@@ -32,13 +32,15 @@ impl Engine {
         out: &mut Outbox,
     ) -> Result<Flow, ClientError> {
         for frame in Frames::new(bytes) {
-            if self.dispatch(id, frame?, out)? == Flow::Close {
+            if self.state.dispatch(id, frame?, out)? == Flow::Close {
                 return Ok(Flow::Close);
             }
         }
         Ok(Flow::Open)
     }
+}
 
+impl State {
     fn dispatch(
         &mut self,
         id: ClientId,

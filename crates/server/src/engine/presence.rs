@@ -7,11 +7,11 @@ use cobalt_protocol::{Frame, HEADER_LEN, Packet, ProtocolResult, S2c};
 use super::error::ClientError;
 use super::stage::Stage;
 use super::world_info::narrow;
-use super::{Engine, Outbox};
+use super::{Outbox, State};
 use crate::log::debug_log;
 use crate::model::{ClientId, Item, Player};
 
-impl Engine {
+impl State {
     pub(super) fn admit(
         &self,
         id: ClientId,

@@ -5,7 +5,7 @@ use cobalt_protocol::Frame;
 use cobalt_protocol::registry::{DoorToggle, ModifyTile};
 
 use super::error::ClientError;
-use super::{Engine, Outbox};
+use super::{Outbox, State};
 use crate::model::ClientId;
 
 const KILL_TILE: u8 = 0;
@@ -15,7 +15,7 @@ const PLACE_WALL: u8 = 3;
 const KILL_TILE_QUIET: u8 = 4;
 const FAILED: i16 = 1;
 
-impl Engine {
+impl State {
     pub(super) fn toggle_door(
         &self,
         id: ClientId,

@@ -1,6 +1,12 @@
+use std::mem;
+
 use cobalt_format::World;
 use cobalt_format::world::header::flags::WorldFlag;
 use cobalt_protocol::registry::Time;
+
+use super::Outbox;
+use super::schedule::System;
+use super::state::State;
 
 const DAY_LENGTH: f64 = 54_000.0;
 const NIGHT_LENGTH: f64 = 32_400.0;
@@ -10,6 +16,7 @@ pub(super) struct Clock {
     day: bool,
     time: f64,
     unsynced_ticks: u32,
+    due: bool,
 }
 
 impl Clock {
@@ -19,14 +26,11 @@ impl Clock {
             day: header.flags.contains(&WorldFlag::DayTime),
             time: header.clock.time,
             unsynced_ticks: 0,
+            due: false,
         }
     }
 
-    pub(super) fn tick_clock(&mut self) {
-
-    }
-
-    pub(super) fn advance(&mut self, tick_rate: u32) -> bool {
+    pub(super) fn advance(&mut self, tick_rate: u32) {
         self.time += TICKS_PER_SECOND / f64::from(tick_rate);
         self.unsynced_ticks += 1;
 
@@ -37,14 +41,35 @@ impl Clock {
             self.day = !self.day;
         }
 
-        let due = flipped || self.unsynced_ticks >= tick_rate;
-        if due {
+        if flipped || self.unsynced_ticks >= tick_rate {
             self.unsynced_ticks = 0;
+            self.due = true;
         }
-        due
+    }
+
+    pub(super) fn take_due(&mut self) -> bool {
+        mem::take(&mut self.due)
     }
 
     pub(super) fn packet(&self) -> Time {
         Time { day_time: self.day, time: self.time as i32, sun_mod_y: 0, moon_mod_y: 0 }
+    }
+}
+
+pub(super) struct AdvanceClock;
+
+impl System for AdvanceClock {
+    fn run(&mut self, state: &mut State, _: &mut Outbox) {
+        state.clock.advance(state.tick_rate);
+    }
+}
+
+pub(super) struct SyncClock;
+
+impl System for SyncClock {
+    fn run(&mut self, state: &mut State, out: &mut Outbox) {
+        if state.clock.take_due() {
+            out.broadcast(state.clock.packet().into(), None);
+        }
     }
 }

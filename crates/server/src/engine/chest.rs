@@ -4,13 +4,13 @@ use cobalt_protocol::registry::{ActiveChest, OpenChest, SyncPlayerChestIndex, Up
 
 use super::error::ClientError;
 use super::world_info::narrow;
-use super::{Engine, Outbox};
+use super::{Outbox, State};
 use crate::model::ClientId;
 
 const CHEST_SLOTS: usize = 40;
 const NO_CHEST: i16 = -1;
 
-impl Engine {
+impl State {
     pub(super) fn open_chest(
         &mut self,
         id: ClientId,

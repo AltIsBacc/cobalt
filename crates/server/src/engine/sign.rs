@@ -2,12 +2,12 @@ use cobalt_protocol::registry::{RequestSign, UpdateSign};
 
 use super::error::ClientError;
 use super::world_info::narrow;
-use super::{Engine, Outbox};
+use super::{Outbox, State};
 use crate::model::ClientId;
 
 const MAX_SIGN_BYTES: usize = 1_000;
 
-impl Engine {
+impl State {
     pub(super) fn read_sign(
         &self,
         id: ClientId,
