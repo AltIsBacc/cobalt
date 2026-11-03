@@ -9,6 +9,7 @@ mod section;
 mod sign;
 mod slots;
 mod stage;
+mod state;
 mod tiles;
 mod world_info;
 
@@ -82,6 +83,8 @@ impl Engine {
 
     pub(crate) fn tick(&mut self, out: &mut Outbox) -> u32 {
         self.ticks += 1;
+
+        self.clock.tick_clock();
         if self.clock.advance(self.tick_rate) {
             self.broadcast(self.clock.packet().into(), None, out);
         }

@@ -22,6 +22,10 @@ impl Clock {
         }
     }
 
+    pub(super) fn tick_clock(&mut self) {
+
+    }
+
     pub(super) fn advance(&mut self, tick_rate: u32) -> bool {
         self.time += TICKS_PER_SECOND / f64::from(tick_rate);
         self.unsynced_ticks += 1;
