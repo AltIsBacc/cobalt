@@ -88,7 +88,7 @@ impl State {
 
         let chest = chest.map_or(NO_CHEST, narrow);
         let sync = SyncPlayerChestIndex { player_id: id.get(), chest };
-        self.broadcast(sync.into(), Some(id), out);
+        out.broadcast(self.audience(Some(id)), sync.into());
     }
 }
 

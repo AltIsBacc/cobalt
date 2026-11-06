@@ -1,8 +1,10 @@
 use std::mem;
 
 use cobalt_protocol::registry::{
-    Disconnect, PlayerControls, PlayerHp, PlayerInfo, PlayerInventorySlot, PlayerMana, PlayerTeam,
-    RequestEssentialTiles, SpawnPlayer, UpdatePlayerBuff,
+    Disconnect, Emoji, HealEffect, ManaEffect, PlayerControls, PlayerDodge, PlayerHp, PlayerInfo,
+    PlayerInventorySlot, PlayerItemAnimation, PlayerMana, PlayerTeam, PlayerTeleportPortal,
+    PlayerZone, RequestEssentialTiles, SetPlayerStealth, SpawnPlayer, SyncTilePicking, TogglePvp,
+    UpdatePlayerBuff,
 };
 use cobalt_protocol::{C2s, Frame, Frames, NetworkText, Packet};
 
@@ -13,7 +15,7 @@ use super::{Engine, Flow, Outbox, State, section, world_info};
 use crate::log::debug_log;
 use crate::model::{ClientId, Event};
 
-const RELAYED: [u8; 8] = [
+const RELAYED: &[u8] = &[
     PlayerInfo::ID,
     PlayerInventorySlot::ID,
     SpawnPlayer::ID,
@@ -22,6 +24,16 @@ const RELAYED: [u8; 8] = [
     PlayerMana::ID,
     PlayerTeam::ID,
     UpdatePlayerBuff::ID,
+    PlayerItemAnimation::ID,
+    TogglePvp::ID,
+    HealEffect::ID,
+    ManaEffect::ID,
+    PlayerDodge::ID,
+    SetPlayerStealth::ID,
+    PlayerZone::ID,
+    Emoji::ID,
+    SyncTilePicking::ID,
+    PlayerTeleportPortal::ID,
 ];
 
 impl Engine {
@@ -47,7 +59,7 @@ impl State {
         frame: Frame<'_>,
         out: &mut Outbox,
     ) -> Result<Flow, ClientError> {
-        debug_log!("[cid {id}] {} : {:?}", frame.kind, frame.payload);
+        debug_log!("[cid {id}] {}", frame.kind);
         let Some(stage) = self.slots.get_mut(id) else { return Ok(Flow::Close) };
 
         match mem::replace(stage, Stage::Closing) {
@@ -75,7 +87,7 @@ impl State {
                     *stage = Stage::Loading(player);
                     return Ok(Flow::Open);
                 }
-                section::send_spawn(&self.world, id, out)?;
+                section::send_spawn(&self.world, &mut self.streams[id.index()], id, out)?;
                 *stage = Stage::Spawning(player);
                 Ok(Flow::Open)
             }
@@ -108,11 +120,13 @@ impl State {
         packet: Option<C2s<'_>>,
         out: &mut Outbox,
     ) -> Result<(), ClientError> {
-        if RELAYED.contains(&frame.kind) {
-            self.relay(&attributed(frame, id)?, Some(id), out);
+        let relayed = RELAYED.contains(&frame.kind);
+        if relayed {
+            out.relay_all(self.audience(Some(id)), &attributed(frame, id)?);
         }
 
         match packet {
+            Some(C2s::PlayerControls(controls)) => self.stream_sections(id, &controls, out),
             Some(C2s::NetModule(module)) => self.handle_module(id, &module, out),
             Some(C2s::OpenChest(request)) => self.open_chest(id, &request, out),
             Some(C2s::ActiveChest(active)) => {
@@ -124,7 +138,11 @@ impl State {
             Some(C2s::ModifyTile(change)) => self.modify_tile(id, &change, frame, out),
             Some(C2s::RequestSign(request)) => self.read_sign(id, &request, out),
             Some(C2s::UpdateSign(update)) => self.edit_sign(id, &update, out),
-            _ => Ok(()),
+            _ if relayed => Ok(()),
+            _ => {
+                debug_log!("[cid {id}] unhandled packet {}", frame.kind);
+                Ok(())
+            }
         }
     }
 }

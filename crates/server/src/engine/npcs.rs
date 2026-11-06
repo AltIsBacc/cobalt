@@ -15,19 +15,15 @@ impl NPCS {
     }
 }
 
-pub(super) struct TickNPCS;
+pub(super) struct NpcSystem;
 
-impl System for TickNPCS {
-    fn run(&mut self, state: &mut super::State, out: &mut super::Outbox) {
-        
+impl System for NpcSystem {
+    fn update(&self, state: &mut super::State) {
+
     }
-}
 
-pub(super) struct SyncNPCS;
+    fn sync(&self, state: &mut super::State, out: &mut super::Outbox) {
 
-impl System for SyncNPCS {
-    fn run(&mut self, state: &mut super::State, out: &mut super::Outbox) {
-        
     }
 }
 

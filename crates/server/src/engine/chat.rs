@@ -45,7 +45,7 @@ impl State {
         ChatBroadcast { author: id.get(), text: NetworkText::Literal(&line), color: WHITE }
             .encode(&mut Writer::new(&mut body))?;
         let module = NetModule { module: CHAT_MODULE, rest: Remainder(&body) };
-        self.broadcast(module.into(), None, out);
+        out.broadcast(self.audience(None), module.into());
         Ok(())
     }
 }

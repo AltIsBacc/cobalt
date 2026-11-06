@@ -49,7 +49,7 @@ impl State {
         sign.text = update.text.to_owned();
 
         let relayed = UpdateSign { player_id: id.get(), ..update.clone() };
-        self.broadcast(relayed.into(), Some(id), out);
+        out.broadcast(self.audience(Some(id)), relayed.into());
         Ok(())
     }
 }

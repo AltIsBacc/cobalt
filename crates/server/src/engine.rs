@@ -22,9 +22,7 @@ use cobalt_format::World;
 use cobalt_protocol::registry::{PlayerActive, SetUserSlot};
 use cobalt_protocol::{ProtocolError, ProtocolResult};
 
-use self::clock::{AdvanceClock, SyncClock};
 pub(crate) use self::outbox::Outbox;
-use self::schedule::{Phase, Schedule};
 use self::stage::{Authenticating, Stage};
 use self::state::State;
 use crate::config::{self, ServerConfig};
@@ -49,19 +47,12 @@ pub(crate) enum Flow {
 
 pub(crate) struct Engine {
     state: State,
-    schedule: Schedule,
     open: bool,
 }
 
 impl Engine {
     pub(crate) fn new(world: World, config: &ServerConfig) -> Self {
-        Self {
-            state: State::new(world, config),
-            schedule: Schedule::default()
-                .with(Phase::Update, AdvanceClock)
-                .with(Phase::Sync, SyncClock),
-            open: true,
-        }
+        Self { state: State::new(world, config), open: true }
     }
 
     pub(crate) const fn is_open(&self) -> bool {
@@ -82,7 +73,7 @@ impl Engine {
 
     pub(crate) fn tick(&mut self, out: &mut Outbox) -> u32 {
         self.state.ticks += 1;
-        self.schedule.run(&mut self.state, out);
+        schedule::run(&mut self.state, out);
         self.state.tick_rate
     }
 
@@ -119,7 +110,8 @@ impl Engine {
     pub(crate) fn release(&mut self, id: ClientId, out: &mut Outbox) {
         let Some(stage) = self.state.slots.remove(id) else { return };
         if matches!(stage, Stage::Playing(_)) {
-            self.state.broadcast(PlayerActive { player_id: id.get(), active: 0 }.into(), None, out);
+            let gone = PlayerActive { player_id: id.get(), active: 0 };
+            out.broadcast(self.state.audience(None), gone.into());
         }
         out.emit(Event::ClientLeft { id });
     }

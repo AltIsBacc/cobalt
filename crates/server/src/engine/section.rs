@@ -1,19 +1,23 @@
 use std::borrow::Cow;
 use std::io::{self, Write};
+use std::mem;
 use std::ops::Range;
 
 use cobalt_format::World;
 use cobalt_format::world::header::Size;
-use cobalt_protocol::registry::{CompleteConnectionAndSpawn, SectionTileFrame, Status, TileSection};
+use cobalt_protocol::registry::{
+    CompleteConnectionAndSpawn, PlayerControls, SectionTileFrame, Status, TileSection,
+};
 use cobalt_protocol::{NetworkText, ProtocolResult, Remainder, Writer};
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
 
-use super::Outbox;
 use super::error::ClientError;
 use super::world_info::narrow;
+use super::{Outbox, State};
 use crate::model::ClientId;
 
+const TILE_PIXELS: f32 = 16.0;
 const SECTION_WIDTH: usize = 200;
 const SECTION_HEIGHT: usize = 150;
 const RADIUS_X: usize = 2;
@@ -86,7 +90,46 @@ impl Window {
     }
 }
 
-pub(super) fn send_spawn(world: &World, to: ClientId, out: &mut Outbox) -> Result<(), ClientError> {
+pub(super) struct Streamed {
+    columns: usize,
+    sent: Box<[bool]>,
+}
+
+impl Streamed {
+    pub(super) fn new(size: Size) -> Self {
+        let columns = size.width.div_ceil(SECTION_WIDTH);
+        let rows = size.height.div_ceil(SECTION_HEIGHT);
+        Self { columns, sent: vec![false; columns * rows].into_boxed_slice() }
+    }
+
+    fn reset(&mut self) {
+        self.sent.fill(false);
+    }
+
+    fn claim(&mut self, column: usize, row: usize) -> bool {
+        !mem::replace(&mut self.sent[row * self.columns + column], true)
+    }
+}
+
+impl State {
+    pub(super) fn stream_sections(
+        &mut self,
+        id: ClientId,
+        controls: &PlayerControls<'_>,
+        out: &mut Outbox,
+    ) -> Result<(), ClientError> {
+        let size = self.world.header.size;
+        let window = Window::around(size, tile(controls.x), tile(controls.y));
+        send_missing(&self.world, &window, &mut self.streams[id.index()], id, out)
+    }
+}
+
+pub(super) fn send_spawn(
+    world: &World,
+    streamed: &mut Streamed,
+    to: ClientId,
+    out: &mut Outbox,
+) -> Result<(), ClientError> {
     let spawn = world.header.locations.spawn;
     let window = Window::around(world.header.size, spawn.x, spawn.y);
 
@@ -96,29 +139,42 @@ pub(super) fn send_spawn(world: &World, to: ClientId, out: &mut Outbox) -> Resul
         flags: 0,
     };
     out.send(to, status.into())?;
-    send_window(world, &window, to, out)?;
+    streamed.reset();
+    send_missing(world, &window, streamed, to, out)?;
     out.send(to, CompleteConnectionAndSpawn {}.into())?;
     Ok(())
 }
 
-fn send_window(
+fn send_missing(
     world: &World,
     window: &Window,
+    streamed: &mut Streamed,
     to: ClientId,
     out: &mut Outbox,
 ) -> Result<(), ClientError> {
     let size = world.header.size;
     let mut stream = Vec::new();
+    let mut sent = false;
     for column in window.columns.clone() {
         for row in window.rows.clone() {
+            if !streamed.claim(column, row) {
+                continue;
+            }
             stream.clear();
             write_stream(world, &Section::new(size, column, row), &mut stream)?;
             let payload = deflate(&stream)?;
             out.send(to, TileSection { payload: Remainder(&payload) }.into())?;
+            sent = true;
         }
     }
-    out.send(to, window.frame().into())?;
+    if sent {
+        out.send(to, window.frame().into())?;
+    }
     Ok(())
+}
+
+fn tile(pixels: f32) -> i32 {
+    (pixels / TILE_PIXELS) as i32
 }
 
 fn window(center: usize, radius: usize, count: usize) -> Range<usize> {

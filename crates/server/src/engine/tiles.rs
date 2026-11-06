@@ -26,7 +26,7 @@ impl State {
         let in_world = coordinates(door.x, door.y)
             .is_some_and(|(x, y)| self.world.tiles.get(x, y).is_some());
         if in_world {
-            self.forward(frame, id, out)?;
+            out.forward(self.audience(Some(id)), frame)?;
         }
         Ok(())
     }
@@ -60,7 +60,8 @@ impl State {
             _ => {}
         }
 
-        self.forward(frame, id, out)
+        out.forward(self.audience(Some(id)), frame)?;
+        Ok(())
     }
 }
 

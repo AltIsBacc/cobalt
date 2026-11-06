@@ -56,20 +56,16 @@ impl Clock {
     }
 }
 
-pub(super) struct AdvanceClock;
+pub(super) struct ClockSystem;
 
-impl System for AdvanceClock {
-    fn run(&mut self, state: &mut State, _: &mut Outbox) {
+impl System for ClockSystem {
+    fn update(&self, state: &mut State) {
         state.clock.advance(state.tick_rate);
     }
-}
 
-pub(super) struct SyncClock;
-
-impl System for SyncClock {
-    fn run(&mut self, state: &mut State, out: &mut Outbox) {
+    fn sync(&self, state: &mut State, out: &mut Outbox) {
         if state.clock.take_due() {
-            out.broadcast(state.clock.packet().into(), None);
+            out.broadcast(state.audience(None), state.clock.packet().into());
         }
     }
 }
