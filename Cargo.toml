@@ -21,6 +21,9 @@ opt-level = 3
 [profile.dev.package.cobalt-format]
 opt-level = 3
 
+[profile.dev.package.cobalt-protocol]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

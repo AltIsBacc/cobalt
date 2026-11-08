@@ -19,6 +19,7 @@ use crate::transport::{Hub, Listener, Queue, Traffic};
 
 const CONTROL_CAPACITY: usize = 8;
 const TRAFFIC_CAPACITY: usize = 1024;
+const TRAFFIC_BATCH: usize = 64;
 const INTERNAL_ERROR: &str = "internal server error";
 const ENGINE_THREAD: &str = "cobalt-engine";
 const ENGINE_PANICKED: &str = "engine thread panicked";
@@ -97,9 +98,11 @@ impl Server {
         let mut ticker = interval(rate);
         let mut controlled = true;
         let mut monitor = Monitor::new();
+        let mut batch = Vec::with_capacity(TRAFFIC_BATCH);
 
         loop {
             tokio::select! {
+                biased;
                 _ = ticker.tick() => {
                     monitor.tick(rate);
                     let current = monitor.measure(Work::Tick, budget(rate), || {
@@ -119,8 +122,10 @@ impl Server {
                         self.close();
                     }
                 },
-                Some(traffic) = self.traffic.recv() => {
-                    monitor.measure(Work::Traffic, budget(rate), || self.on_traffic(traffic));
+                count = self.traffic.recv_many(&mut batch, TRAFFIC_BATCH) => {
+                    if count > 0 {
+                        monitor.measure(Work::Traffic, budget(rate), || self.on_traffic(&mut batch));
+                    }
                 }
             }
 
@@ -148,33 +153,32 @@ impl Server {
         }
     }
 
-    fn on_traffic(&mut self, traffic: Traffic) {
-        let closing = match traffic {
-            Traffic::Join { queue, reply } => {
-                let _ = reply.send(self.join(queue));
-                None
-            }
-            Traffic::Input { id, frames } => {
-                let flow = match self.engine.receive(id, &frames, &mut self.outbox) {
-                    Ok(flow) => flow,
-                    Err(error) => {
-                        debug_log!("{id} dropped: {error}");
-                        Flow::Close
+    fn on_traffic(&mut self, batch: &mut Vec<Traffic>) {
+        for traffic in batch.drain(..) {
+            match traffic {
+                Traffic::Join { queue, reply } => {
+                    let _ = reply.send(self.join(queue));
+                }
+                Traffic::Input { id, frames } => {
+                    let flow = match self.engine.receive(id, &frames, &mut self.outbox) {
+                        Ok(flow) => flow,
+                        Err(error) => {
+                            debug_log!("{id} dropped: {error}");
+                            Flow::Close
+                        }
+                    };
+                    if flow == Flow::Close {
+                        self.flush();
+                        self.queues[id.index()] = None;
                     }
-                };
-                (flow == Flow::Close).then_some(id)
+                }
+                Traffic::Leave { id } => {
+                    self.queues[id.index()] = None;
+                    self.engine.release(id, &mut self.outbox);
+                }
             }
-            Traffic::Leave { id } => {
-                self.queues[id.index()] = None;
-                self.engine.release(id, &mut self.outbox);
-                None
-            }
-        };
-
-        self.flush();
-        if let Some(id) = closing {
-            self.queues[id.index()] = None;
         }
+        self.flush();
     }
 
     fn join(&mut self, queue: Queue) -> Admission {
