@@ -9,7 +9,7 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio::time::{self, Instant, Interval, MissedTickBehavior};
 
 use super::handle::{Control, ServerHandle};
-use super::monitor::{Monitor, Work};
+use super::watchdog::{Heartbeat, Work};
 use crate::config::ServerConfig;
 use crate::engine::{Admission, Engine, Flow, Outbox};
 use crate::error::{ServerError, ServerResult};
@@ -35,6 +35,7 @@ pub struct Server {
     hub: Hub,
     started: Instant,
     engine_core: Option<usize>,
+    heartbeat: Heartbeat,
 }
 
 impl Server {
@@ -62,6 +63,7 @@ impl Server {
             },
             started: Instant::now(),
             engine_core: config.engine_core,
+            heartbeat: Heartbeat::start(config.tick_rate),
         };
 
         Ok((server, ServerHandle::new(control_tx, events)))
@@ -97,15 +99,15 @@ impl Server {
         let mut rate = self.engine.tick_rate();
         let mut ticker = interval(rate);
         let mut controlled = true;
-        let mut monitor = Monitor::new();
+        let heartbeat = self.heartbeat.clone();
         let mut batch = Vec::with_capacity(TRAFFIC_BATCH);
 
         loop {
             tokio::select! {
                 biased;
                 _ = ticker.tick() => {
-                    monitor.tick(rate);
-                    let current = monitor.measure(Work::Tick, budget(rate), || {
+                    heartbeat.tick(rate);
+                    let current = heartbeat.measure(Work::Tick, budget(rate), || {
                         let current = self.engine.tick(&mut self.outbox);
                         self.flush();
                         current
@@ -124,7 +126,7 @@ impl Server {
                 },
                 count = self.traffic.recv_many(&mut batch, TRAFFIC_BATCH) => {
                     if count > 0 {
-                        monitor.measure(Work::Traffic, budget(rate), || self.on_traffic(&mut batch));
+                        heartbeat.measure(Work::Traffic, budget(rate), || self.on_traffic(&mut batch));
                     }
                 }
             }
