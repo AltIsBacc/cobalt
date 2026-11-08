@@ -38,6 +38,7 @@ derive_more = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 async-trait = "0.1"
 flate2 = "1"
+core_affinity = "0.8"
 rayon = "1"
 rustyrepl = { version = "0.2", features = ["async"] }
 inquire = "0.9"

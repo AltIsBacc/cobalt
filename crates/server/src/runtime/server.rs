@@ -1,8 +1,10 @@
 use std::net::SocketAddr;
+use std::thread;
 use std::time::Duration;
 
 use cobalt_format::World;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::runtime;
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::{self, Instant, Interval, MissedTickBehavior};
 
@@ -17,6 +19,8 @@ use crate::transport::{Hub, Listener, Queue, Traffic};
 const CONTROL_CAPACITY: usize = 8;
 const TRAFFIC_CAPACITY: usize = 1024;
 const INTERNAL_ERROR: &str = "internal server error";
+const ENGINE_THREAD: &str = "cobalt-engine";
+const ENGINE_PANICKED: &str = "engine thread panicked";
 
 pub struct Server {
     engine: Engine,
@@ -28,6 +32,7 @@ pub struct Server {
     shutdown: watch::Sender<bool>,
     hub: Hub,
     started: Instant,
+    engine_core: Option<usize>,
 }
 
 impl Server {
@@ -54,6 +59,7 @@ impl Server {
                 outbound_capacity: config.outbound_capacity,
             },
             started: Instant::now(),
+            engine_core: config.engine_core,
         };
 
         Ok((server, ServerHandle::new(control_tx, events)))
@@ -65,9 +71,24 @@ impl Server {
             .listen
             .map(|addr| Listener::bind(addr, server.hub.clone()))
             .transpose()?;
-        let task = tokio::spawn(server.run());
+        let task = server.spawn_thread()?;
 
         Ok(RunningServer { handle, task, listener })
+    }
+
+    fn spawn_thread(self) -> ServerResult<JoinHandle<()>> {
+        let runtime = runtime::Builder::new_current_thread().enable_time().build()?;
+        let (finished, done) = oneshot::channel();
+
+        thread::Builder::new().name(ENGINE_THREAD.into()).spawn(move || {
+            if let Some(core) = self.engine_core {
+                pin_to_core(core);
+            }
+            runtime.block_on(self.run());
+            let _ = finished.send(());
+        })?;
+
+        Ok(tokio::spawn(async move { done.await.expect(ENGINE_PANICKED) }))
     }
 
     pub async fn run(mut self) {
@@ -204,6 +225,12 @@ impl Server {
     }
 }
 
+fn pin_to_core(core: usize) {
+    if !core_affinity::set_for_current(core_affinity::CoreId { id: core }) {
+        debug_log!("could not pin the engine thread to core {core}");
+    }
+}
+
 fn interval(rate: u32) -> Interval {
     let mut ticker = time::interval(Duration::from_secs(1) / rate);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -262,7 +289,7 @@ mod tests {
         ServerConfig { max_players, ..ServerConfig::default() }
     }
 
-    #[tokio::test(start_paused = true)]
+    #[tokio::test]
     async fn ticks_follow_the_configured_rate() {
         let config = ServerConfig { tick_rate: 20, ..ServerConfig::default() };
         let running = Server::spawn(world(), config).unwrap();

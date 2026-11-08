@@ -13,6 +13,7 @@ workspace = true
 cobalt-format.workspace = true
 cobalt-protocol.workspace = true
 
+core_affinity.workspace = true
 flate2.workspace = true
 rayon.workspace = true
 thiserror.workspace = true

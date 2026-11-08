@@ -16,6 +16,9 @@ const DELETE_WORLD: &str = "d. Delete World";
 struct Args {
     #[arg(short, long, default_value_t = 7777)]
     port: u16,
+
+    #[arg(long)]
+    engine_core: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -56,7 +59,8 @@ fn prompt_create_world() -> Result<String, InquireError> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let listen = SocketAddr::from(([0, 0, 0, 0], Args::parse().port));
+    let args = Args::parse();
+    let listen = SocketAddr::from(([0, 0, 0, 0], args.port));
     let mut worlds = vec![
         "/data/data/com.termux/files/home/Programs/TShock/Data/worlds/joaquinvincentdeveyra.wld".to_owned()
     ];
@@ -67,7 +71,7 @@ async fn main() -> Result<()> {
         match prompt_world_menu(&worlds) {
             Ok(WorldAction::Select { name, path }) => {
                 println!("Loading world context '{name}'...");
-                match server::new(path, listen).await {
+                match server::new(path, listen, args.engine_core).await {
                     Ok(console) => break console,
                     Err(error) => {
                         println!("Failed to instantiate game world server: {error}");

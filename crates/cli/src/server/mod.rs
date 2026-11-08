@@ -9,9 +9,13 @@ use crate::server::console::ServerConsole;
 
 pub mod console;
 
-pub async fn new(world_path: impl AsRef<Path>, listen: SocketAddr) -> Result<ServerConsole> {
+pub async fn new(
+    world_path: impl AsRef<Path>,
+    listen: SocketAddr,
+    engine_core: Option<usize>,
+) -> Result<ServerConsole> {
     let world = World::load(world_path)?;
-    let config = ServerConfig { listen: Some(listen), ..ServerConfig::default() };
+    let config = ServerConfig { listen: Some(listen), engine_core, ..ServerConfig::default() };
     let running = Server::spawn(world, config)?;
 
     Ok(ServerConsole::new(running))

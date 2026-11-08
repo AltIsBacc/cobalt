@@ -11,6 +11,7 @@ pub struct ServerConfig {
     pub event_capacity: usize,
     pub listen: Option<SocketAddr>,
     pub handshake_timeout: Duration,
+    pub engine_core: Option<usize>,
 }
 
 impl ServerConfig {
@@ -31,6 +32,9 @@ impl ServerConfig {
         if self.handshake_timeout.is_zero() {
             return Err(ServerError::InvalidConfig("handshake_timeout must be non-zero"));
         }
+        if let Some(core) = self.engine_core {
+            validate_core(core)?;
+        }
 
         Ok(())
     }
@@ -45,7 +49,19 @@ impl Default for ServerConfig {
             event_capacity: 256,
             listen: None,
             handshake_timeout: Duration::from_secs(10),
+            engine_core: None,
         }
+    }
+}
+
+fn validate_core(core: usize) -> ServerResult {
+    let available = core_affinity::get_core_ids()
+        .ok_or(ServerError::InvalidConfig("core pinning is not supported on this platform"))?;
+
+    if available.iter().any(|candidate| candidate.id == core) {
+        Ok(())
+    } else {
+        Err(ServerError::InvalidConfig("engine_core is not an available core"))
     }
 }
 
