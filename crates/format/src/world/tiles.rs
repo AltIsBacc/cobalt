@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::Range;
 
 use crate::error::Result;
 use crate::reader::Reader;
@@ -22,19 +23,21 @@ impl Tiles {
         size: Size,
         frame_important: &FrameImportant,
     ) -> Result<Self> {
-        let mut data = Vec::with_capacity(size.area());
+        let mut tiles = Self::new(size);
 
-        for _ in 0..size.width {
-            let mut remaining = size.height;
-            while remaining > 0 {
+        for x in 0..size.width {
+            let mut y = 0;
+            while y < size.height {
                 let (tile, repeat) = Tile::read(reader, frame_important)?;
-                let run = (repeat + 1).min(remaining);
-                data.resize(data.len() + run, tile);
-                remaining -= run;
+                let end = (y + repeat + 1).min(size.height);
+                for row in y..end {
+                    tiles.data[row * size.width + x] = tile;
+                }
+                y = end;
             }
         }
 
-        Ok(Self { size, data })
+        Ok(tiles)
     }
 
     #[must_use]
@@ -52,13 +55,40 @@ impl Tiles {
         self.index(x, y).and_then(|i| self.data.get_mut(i))
     }
 
+    /// Tiles in row-major order, the layout of a network tile section.
     #[must_use]
     pub fn as_slice(&self) -> &[Tile] {
         &self.data
     }
 
+    pub fn write_region(
+        &self,
+        columns: Range<usize>,
+        rows: Range<usize>,
+        frame_important: &FrameImportant,
+        out: &mut Vec<u8>,
+    ) {
+        let Size { width, height } = self.size;
+        let columns = columns.start.min(width)..columns.end.min(width);
+        let rows = rows.start.min(height)..rows.end.min(height);
+
+        let mut tiles = rows.flat_map(|y| self.data[y * width..][columns.clone()].iter());
+        let Some(mut current) = tiles.next() else { return };
+        let mut run = 0u16;
+        for tile in tiles {
+            if tile == current && run < u16::MAX && current.allows_batching() {
+                run += 1;
+            } else {
+                current.write(out, frame_important, run);
+                current = tile;
+                run = 0;
+            }
+        }
+        current.write(out, frame_important, run);
+    }
+
     fn index(&self, x: usize, y: usize) -> Option<usize> {
-        (x < self.size.width && y < self.size.height).then(|| x * self.size.height + y)
+        (x < self.size.width && y < self.size.height).then(|| y * self.size.width + x)
     }
 }
 

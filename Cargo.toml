@@ -18,6 +18,9 @@ all = { level = "warn", priority = -1 }
 [profile.dev.package."*"]
 opt-level = 3
 
+[profile.dev.package.cobalt-format]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

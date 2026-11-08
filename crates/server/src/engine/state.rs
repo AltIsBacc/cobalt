@@ -4,7 +4,7 @@ use cobalt_format::World;
 
 use super::clock::Clock;
 use super::items::Items;
-use super::section::Streamed;
+use super::section::{Cache, Streamed};
 use super::slots::Slots;
 use super::stage::Stage;
 use crate::config::ServerConfig;
@@ -15,6 +15,7 @@ pub(super) struct State {
     pub(super) clock: Clock,
     pub(super) slots: Slots<Stage>,
     pub(super) streams: Box<[Streamed]>,
+    pub(super) sections: Cache,
     pub(super) items: Items,
     pub(super) tick_rate: u32,
     pub(super) ticks: u64,
@@ -24,7 +25,8 @@ impl State {
     pub(super) fn new(world: World, config: &ServerConfig) -> Self {
         Self {
             clock: Clock::new(&world),
-            streams: (0..config.max_players).map(|_| Streamed::new(world.header.size)).collect(),
+            streams: (0..config.max_players).map(|_| Streamed::unsent(world.header.size)).collect(),
+            sections: Cache::warmed(&world),
             world,
             slots: Slots::new(config.max_players),
             items: Items::new(),

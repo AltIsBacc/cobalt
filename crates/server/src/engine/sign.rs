@@ -47,6 +47,7 @@ impl State {
             return Ok(());
         };
         sign.text = update.text.to_owned();
+        self.invalidate_section(x, y);
 
         let relayed = UpdateSign { player_id: id.get(), ..update.clone() };
         out.broadcast(self.audience(Some(id)), relayed.into());

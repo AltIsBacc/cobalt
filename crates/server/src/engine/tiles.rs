@@ -41,6 +41,7 @@ impl State {
         let Some((x, y)) = coordinates(change.x, change.y) else { return Ok(()) };
         let frame_important = &self.world.frame_important;
         let Some(tile) = self.world.tiles.get_mut(x, y) else { return Ok(()) };
+        let previous = *tile;
         let mut broken = None;
 
         match change.action {
@@ -63,6 +64,10 @@ impl State {
                     u16::try_from(change.flags1).ok().filter(|&wall| wall != 0).map(plain_wall);
             }
             _ => {}
+        }
+
+        if *tile != previous {
+            self.invalidate_section(i32::from(change.x), i32::from(change.y));
         }
 
         out.forward(self.audience(Some(id)), frame)?;

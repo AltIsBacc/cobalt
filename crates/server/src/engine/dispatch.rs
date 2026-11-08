@@ -11,7 +11,7 @@ use cobalt_protocol::{C2s, Frame, Frames, NetworkText, Packet};
 use super::error::ClientError;
 use super::presence::attributed;
 use super::stage::{Absorbed, Stage, remember};
-use super::{Engine, Flow, Outbox, State, section, world_info};
+use super::{Engine, Flow, Outbox, State, world_info};
 use crate::log::debug_log;
 use crate::model::{ClientId, Event};
 
@@ -87,8 +87,8 @@ impl State {
                     *stage = Stage::Loading(player);
                     return Ok(Flow::Open);
                 }
-                section::send_spawn(&self.world, &mut self.streams[id.index()], id, out)?;
                 *stage = Stage::Spawning(player);
+                self.stream_spawn(id, out)?;
                 Ok(Flow::Open)
             }
             Stage::Spawning(player) => {
