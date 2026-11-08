@@ -183,6 +183,17 @@ define_packets! {
         16 PlayerHp { player_id: u8, hp: i16, max_hp: i16 },
         17 ModifyTile { action: u8, x: i16, y: i16, flags1: i16, flags2: u8 },
         19 DoorToggle { action: u8, x: i16, y: i16, direction: u8 },
+        21 UpdateItemDrop {
+            item_id: i16,
+            x: f32,
+            y: f32,
+            velocity_x: f32,
+            velocity_y: f32,
+            stack: i16,
+            prefix: u8,
+            no_delay: u8,
+            item_net_id: i16,
+        },
         22 UpdateItemOwner { item_id: i16, player_id: u8 },
         24 StrikeNpcWithHeldItem { npc_id: i16, player_id: u8 },
         28 NpcStrike {

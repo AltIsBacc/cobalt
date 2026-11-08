@@ -3,6 +3,7 @@ use std::time::Duration;
 use cobalt_format::World;
 
 use super::clock::Clock;
+use super::items::Items;
 use super::section::Streamed;
 use super::slots::Slots;
 use super::stage::Stage;
@@ -14,6 +15,7 @@ pub(super) struct State {
     pub(super) clock: Clock,
     pub(super) slots: Slots<Stage>,
     pub(super) streams: Box<[Streamed]>,
+    pub(super) items: Items,
     pub(super) tick_rate: u32,
     pub(super) ticks: u64,
 }
@@ -25,6 +27,7 @@ impl State {
             streams: (0..config.max_players).map(|_| Streamed::new(world.header.size)).collect(),
             world,
             slots: Slots::new(config.max_players),
+            items: Items::new(),
             tick_rate: config.tick_rate,
             ticks: 0,
         }

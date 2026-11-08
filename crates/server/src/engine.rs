@@ -3,6 +3,7 @@ mod chest;
 mod clock;
 mod dispatch;
 mod error;
+mod items;
 mod npcs;
 mod outbox;
 mod presence;
@@ -110,6 +111,7 @@ impl Engine {
     pub(crate) fn release(&mut self, id: ClientId, out: &mut Outbox) {
         let Some(stage) = self.state.slots.remove(id) else { return };
         if matches!(stage, Stage::Playing(_)) {
+            self.state.disown_items(id, out);
             let gone = PlayerActive { player_id: id.get(), active: 0 };
             out.broadcast(self.state.audience(None), gone.into());
         }

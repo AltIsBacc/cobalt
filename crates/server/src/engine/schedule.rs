@@ -1,5 +1,6 @@
 use super::Outbox;
 use super::clock::ClockSystem;
+use super::items::ItemSystem;
 use super::state::State;
 
 pub(super) trait System {
@@ -8,7 +9,7 @@ pub(super) trait System {
     fn sync(&self, _: &mut State, _: &mut Outbox) {}
 }
 
-const SYSTEMS: &[&dyn System] = &[&ClockSystem];
+const SYSTEMS: &[&dyn System] = &[&ClockSystem, &ItemSystem];
 
 pub(super) fn run(state: &mut State, out: &mut Outbox) {
     for system in SYSTEMS {

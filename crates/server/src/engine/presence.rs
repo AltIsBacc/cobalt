@@ -22,6 +22,10 @@ impl State {
         for (other, player) in self.playing().filter(|&(other, _)| other != id) {
             describe(other, player, id, out)?;
         }
+        for (item, owner) in self.items.snapshot() {
+            out.send(id, item.into())?;
+            out.send(id, owner.into())?;
+        }
         out.send(id, self.clock.packet().into())?;
         out.send(id, FinishedConnectingToServer {}.into())?;
 
