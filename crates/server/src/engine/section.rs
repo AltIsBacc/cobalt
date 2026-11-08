@@ -11,6 +11,7 @@ use cobalt_protocol::registry::{
 use cobalt_protocol::{NetworkText, ProtocolResult, Remainder, Writer};
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use super::error::ClientError;
 use super::world_info::narrow;
@@ -153,24 +154,32 @@ fn send_missing(
     out: &mut Outbox,
 ) -> Result<(), ClientError> {
     let size = world.header.size;
-    let mut stream = Vec::new();
-    let mut sent = false;
-    for column in window.columns.clone() {
-        for row in window.rows.clone() {
-            if !streamed.claim(column, row) {
-                continue;
-            }
-            stream.clear();
-            write_stream(world, &Section::new(size, column, row), &mut stream)?;
-            let payload = deflate(&stream)?;
-            out.send(to, TileSection { payload: Remainder(&payload) }.into())?;
-            sent = true;
-        }
+    let pending: Vec<Section> = window
+        .columns
+        .clone()
+        .flat_map(|column| window.rows.clone().map(move |row| (column, row)))
+        .filter(|&(column, row)| streamed.claim(column, row))
+        .map(|(column, row)| Section::new(size, column, row))
+        .collect();
+
+    let payloads = pending
+        .par_iter()
+        .map_init(Vec::new, |stream, section| encode(world, section, stream))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for payload in &payloads {
+        out.send(to, TileSection { payload: Remainder(payload) }.into())?;
     }
-    if sent {
+    if !payloads.is_empty() {
         out.send(to, window.frame().into())?;
     }
     Ok(())
+}
+
+fn encode(world: &World, section: &Section, stream: &mut Vec<u8>) -> Result<Vec<u8>, ClientError> {
+    stream.clear();
+    write_stream(world, section, stream)?;
+    Ok(deflate(stream)?)
 }
 
 fn tile(pixels: f32) -> i32 {
@@ -188,7 +197,7 @@ fn within(range: &Range<usize>, value: i32) -> bool {
 
 fn deflate(stream: &[u8]) -> io::Result<Vec<u8>> {
     let mut encoder =
-        DeflateEncoder::new(Vec::with_capacity(stream.len() / 2), Compression::default());
+        DeflateEncoder::new(Vec::with_capacity(stream.len() / 2), Compression::fast());
     encoder.write_all(stream)?;
     encoder.finish()
 }

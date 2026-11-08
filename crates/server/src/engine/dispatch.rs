@@ -59,7 +59,7 @@ impl State {
         frame: Frame<'_>,
         out: &mut Outbox,
     ) -> Result<Flow, ClientError> {
-        debug_log!("[cid {id}] {}", frame.kind);
+        // debug_log!("[cid {id}] {}", frame.kind);
         let Some(stage) = self.slots.get_mut(id) else { return Ok(Flow::Close) };
 
         match mem::replace(stage, Stage::Closing) {
