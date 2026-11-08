@@ -9,6 +9,7 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio::time::{self, Instant, Interval, MissedTickBehavior};
 
 use super::handle::{Control, ServerHandle};
+use super::monitor::{Monitor, Work};
 use crate::config::ServerConfig;
 use crate::engine::{Admission, Engine, Flow, Outbox};
 use crate::error::{ServerError, ServerResult};
@@ -95,12 +96,17 @@ impl Server {
         let mut rate = self.engine.tick_rate();
         let mut ticker = interval(rate);
         let mut controlled = true;
+        let mut monitor = Monitor::new();
 
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    let current = self.engine.tick(&mut self.outbox);
-                    self.flush();
+                    monitor.tick(rate);
+                    let current = monitor.measure(Work::Tick, budget(rate), || {
+                        let current = self.engine.tick(&mut self.outbox);
+                        self.flush();
+                        current
+                    });
                     if current != rate {
                         rate = current;
                         ticker = interval(rate);
@@ -113,7 +119,9 @@ impl Server {
                         self.close();
                     }
                 },
-                Some(traffic) = self.traffic.recv() => self.on_traffic(traffic),
+                Some(traffic) = self.traffic.recv() => {
+                    monitor.measure(Work::Traffic, budget(rate), || self.on_traffic(traffic));
+                }
             }
 
             if !self.engine.is_open() && self.engine.is_empty() {
@@ -231,8 +239,12 @@ fn pin_to_core(core: usize) {
     }
 }
 
+fn budget(rate: u32) -> Duration {
+    Duration::from_secs(1) / rate
+}
+
 fn interval(rate: u32) -> Interval {
-    let mut ticker = time::interval(Duration::from_secs(1) / rate);
+    let mut ticker = time::interval(budget(rate));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     ticker
 }
