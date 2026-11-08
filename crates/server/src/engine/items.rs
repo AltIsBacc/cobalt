@@ -1,8 +1,10 @@
 use cobalt_protocol::Frame;
-use cobalt_protocol::registry::{RemoveItemOwner, UpdateItemDrop, UpdateItemOwner};
+use cobalt_protocol::registry::{UpdateItemDrop, UpdateItemOwner};
 
+use super::drops;
 use super::error::ClientError;
 use super::schedule::System;
+use super::section::TILE_PIXELS;
 use super::world_info::narrow;
 use super::{Outbox, State};
 use crate::model::ClientId;
@@ -11,6 +13,7 @@ const CAPACITY: usize = 400;
 const NEW_ITEM: i16 = 400;
 const NO_OWNER: u8 = 255;
 const LIFETIME_SECONDS: u64 = 300;
+const POP_VELOCITY: f32 = -2.0;
 
 pub(super) struct Items {
     slots: Box<[Option<WorldItem>]>,
@@ -106,6 +109,20 @@ impl WorldItem {
         }
     }
 
+    fn spawned(kind: i16, x: f32, y: f32, owner: ClientId, born: u64) -> Self {
+        Self {
+            x,
+            y,
+            velocity_x: 0.0,
+            velocity_y: POP_VELOCITY,
+            stack: 1,
+            prefix: 0,
+            kind,
+            owner: owner.get(),
+            born,
+        }
+    }
+
     fn update(&mut self, update: &UpdateItemDrop) {
         self.x = update.x;
         self.y = update.y;
@@ -159,19 +176,18 @@ impl State {
         Ok(())
     }
 
-    pub(super) fn release_item(
+    pub(super) fn drop_block(
         &mut self,
-        id: ClientId,
-        request: &RemoveItemOwner,
+        miner: ClientId,
+        block: u16,
+        x: i16,
+        y: i16,
         out: &mut Outbox,
     ) {
-        let Some(item) = self.items.get_mut(request.item_index) else { return };
-        if item.owner != id.get() {
-            return;
-        }
-        item.owner = NO_OWNER;
-        let packet = item.owner_packet(request.item_index);
-        out.broadcast(self.audience(None), packet.into());
+        let Some(kind) = drops::block_item(block) else { return };
+        let (x, y) = (f32::from(x) * TILE_PIXELS, f32::from(y) * TILE_PIXELS);
+        let index = self.items.insert(WorldItem::spawned(kind, x, y, miner, self.ticks));
+        self.announce_item(index, out);
     }
 
     pub(super) fn disown_items(&mut self, owner: ClientId, out: &mut Outbox) {

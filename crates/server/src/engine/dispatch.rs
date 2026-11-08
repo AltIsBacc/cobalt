@@ -129,10 +129,6 @@ impl State {
             Some(C2s::PlayerControls(controls)) => self.stream_sections(id, &controls, out),
             Some(C2s::NetModule(module)) => self.handle_module(id, &module, out),
             Some(C2s::UpdateItemDrop(update)) => self.update_item_drop(id, &update, frame, out),
-            /* Some(C2s::RemoveItemOwner(request)) => {
-                self.release_item(id, &request, out);
-                Ok(())
-            } */
             Some(C2s::OpenChest(request)) => self.open_chest(id, &request, out),
             Some(C2s::ActiveChest(active)) => {
                 self.close_chest(id, &active, out);

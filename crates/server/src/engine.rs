@@ -2,6 +2,7 @@ mod chat;
 mod chest;
 mod clock;
 mod dispatch;
+mod drops;
 mod error;
 mod items;
 mod npcs;

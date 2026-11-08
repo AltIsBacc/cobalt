@@ -41,10 +41,15 @@ impl State {
         let Some((x, y)) = coordinates(change.x, change.y) else { return Ok(()) };
         let frame_important = &self.world.frame_important;
         let Some(tile) = self.world.tiles.get_mut(x, y) else { return Ok(()) };
+        let mut broken = None;
 
         match change.action {
             KILL_TILE | KILL_TILE_QUIET if change.flags1 != FAILED => {
-                tile.block = tile.block.filter(|block| frame_important.contains(block.id));
+                if let Some(block) = tile.block.filter(|block| !frame_important.contains(block.id))
+                {
+                    tile.block = None;
+                    broken = (change.action == KILL_TILE).then_some(block.id);
+                }
             }
             PLACE_TILE if tile.block.is_none() => {
                 tile.block = u16::try_from(change.flags1)
@@ -61,6 +66,9 @@ impl State {
         }
 
         out.forward(self.audience(Some(id)), frame)?;
+        if let Some(block) = broken {
+            self.drop_block(id, block, change.x, change.y, out);
+        }
         Ok(())
     }
 }

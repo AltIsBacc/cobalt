@@ -18,7 +18,7 @@ use super::world_info::narrow;
 use super::{Outbox, State};
 use crate::model::ClientId;
 
-const TILE_PIXELS: f32 = 16.0;
+pub(super) const TILE_PIXELS: f32 = 16.0;
 const SECTION_WIDTH: usize = 200;
 const SECTION_HEIGHT: usize = 150;
 const RADIUS_X: usize = 2;
