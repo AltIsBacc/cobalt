@@ -7,7 +7,7 @@ use flate2::Compression;
 use flate2::write::DeflateEncoder;
 
 use super::Region;
-use crate::engine::error::ClientError;
+use crate::engine::ClientError;
 use crate::engine::world_info::narrow;
 
 pub(super) fn packet(

@@ -1,31 +1,32 @@
-mod chat;
-mod chest;
-mod clock;
-mod dispatch;
-mod drops;
+mod context;
 mod error;
-mod items;
-mod npcs;
+mod event;
+mod group;
+mod module;
+mod modules;
 mod outbox;
-mod presence;
-mod schedule;
-mod section;
-mod sign;
+mod router;
+mod session;
 mod slots;
-mod stage;
 mod state;
-mod tiles;
+mod vanilla;
 mod world_info;
 
 use std::mem;
 use std::time::Duration;
 
 use cobalt_format::World;
-use cobalt_protocol::registry::{PlayerActive, SetUserSlot};
-use cobalt_protocol::{ProtocolError, ProtocolResult};
+use cobalt_protocol::registry::SetUserSlot;
+use cobalt_protocol::{Frames, ProtocolError, ProtocolResult};
 
+pub use self::context::{Audience, Context};
+pub use self::error::ClientError;
+pub use self::event::GameEvent;
+pub use self::group::Group;
+pub use self::module::{Handled, Incoming, Module, ModuleInfo, StageKind, Subscription, Verdict};
+use self::modules::Modules;
 pub(crate) use self::outbox::Outbox;
-use self::stage::{Authenticating, Stage};
+use self::session::Session;
 use self::state::State;
 use crate::config::{self, ServerConfig};
 use crate::error::ServerResult;
@@ -49,12 +50,23 @@ pub(crate) enum Flow {
 
 pub(crate) struct Engine {
     state: State,
+    modules: Modules,
     open: bool,
 }
 
 impl Engine {
     pub(crate) fn new(world: World, config: &ServerConfig) -> Self {
-        Self { state: State::new(world, config), open: true }
+        Self::with_modules(world, config, Vec::new())
+    }
+
+    pub(crate) fn with_modules(
+        world: World,
+        config: &ServerConfig,
+        modules: Vec<Box<dyn Module>>,
+    ) -> Self {
+        let mut builtin: Vec<Box<dyn Module>> = vec![Box::new(vanilla::module(&world, config))];
+        builtin.extend(modules);
+        Self { state: State::new(world, config), modules: Modules::new(builtin), open: true }
     }
 
     pub(crate) const fn is_open(&self) -> bool {
@@ -73,9 +85,21 @@ impl Engine {
         self.state.tick_rate
     }
 
+    pub(crate) fn start(&mut self, out: &mut Outbox) {
+        self.modules.start(&mut self.state, out);
+        self.modules.settle(&mut self.state, out);
+    }
+
+    pub(crate) fn stop(&mut self, out: &mut Outbox) {
+        self.modules.stop(&mut self.state, out);
+        self.modules.settle(&mut self.state, out);
+    }
+
     pub(crate) fn tick(&mut self, out: &mut Outbox) -> u32 {
         self.state.ticks += 1;
-        schedule::run(&mut self.state, out);
+        self.modules.update(&mut self.state, out);
+        self.modules.sync(&mut self.state, out);
+        self.modules.settle(&mut self.state, out);
         self.state.tick_rate
     }
 
@@ -97,7 +121,7 @@ impl Engine {
 
         let admitted = self.state.slots.insert_with(|id| {
             out.send(id, SetUserSlot { player_id: id.get() }.into())?;
-            Ok::<_, ProtocolError>(Stage::Authenticating(Authenticating::new()))
+            Ok::<_, ProtocolError>(Session::new())
         })?;
 
         Ok(match admitted {
@@ -109,14 +133,31 @@ impl Engine {
         })
     }
 
+    pub(crate) fn receive(
+        &mut self,
+        id: ClientId,
+        bytes: &[u8],
+        out: &mut Outbox,
+    ) -> Result<Flow, ClientError> {
+        for frame in Frames::new(bytes) {
+            let frame = frame?;
+            debug_log!("[cid {id}] {} : {:?}", frame.kind, frame.payload);
+            self.modules.dispatch(&mut self.state, out, id, frame)?;
+            self.modules.settle(&mut self.state, out);
+            if self.state.is_closed(id) {
+                return Ok(Flow::Close);
+            }
+        }
+        Ok(Flow::Open)
+    }
+
     pub(crate) fn release(&mut self, id: ClientId, out: &mut Outbox) {
-        let Some(stage) = self.state.slots.remove(id) else { return };
-        if matches!(stage, Stage::Playing(_)) {
-            self.state.disown_items(id, out);
-            let gone = PlayerActive { player_id: id.get(), active: 0 };
-            out.broadcast(self.state.audience(None), gone.into());
+        let Some(session) = self.state.slots.remove(id) else { return };
+        if session.stage == StageKind::Playing {
+            self.state.bus.emit(GameEvent::PlayerLeft { id });
         }
         out.emit(Event::ClientLeft { id });
+        self.modules.settle(&mut self.state, out);
     }
 }
 

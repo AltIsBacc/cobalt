@@ -4,7 +4,8 @@ use cobalt_protocol::ProtocolError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub(crate) enum ClientError {
+#[non_exhaustive]
+pub enum ClientError {
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
 

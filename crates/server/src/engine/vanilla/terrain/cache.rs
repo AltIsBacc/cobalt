@@ -2,15 +2,15 @@ use cobalt_format::World;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use super::{Atlas, Section, encode};
-use crate::engine::error::ClientError;
+use crate::engine::ClientError;
 use crate::log::warn_log;
 
-pub(in crate::engine) struct Cache {
+pub(super) struct Cache {
     packets: Atlas<Option<Box<[u8]>>>,
 }
 
 impl Cache {
-    pub(in crate::engine) fn warmed(world: &World) -> Self {
+    pub(super) fn warmed(world: &World) -> Self {
         let mut cache = Self { packets: Atlas::new(world.header.size, None) };
         let sections: Vec<Section> = cache.packets.sections().collect();
         if let Err(error) = cache.ensure(world, &sections) {

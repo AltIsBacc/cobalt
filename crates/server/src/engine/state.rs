@@ -2,21 +2,17 @@ use std::time::Duration;
 
 use cobalt_format::World;
 
-use super::clock::Clock;
-use super::items::Items;
-use super::section::{Cache, Streamed};
+use super::event::Bus;
+use super::module::StageKind;
+use super::session::Session;
 use super::slots::Slots;
-use super::stage::Stage;
 use crate::config::ServerConfig;
-use crate::model::Status;
+use crate::model::{ClientId, Player, Status};
 
 pub(super) struct State {
     pub(super) world: World,
-    pub(super) clock: Clock,
-    pub(super) slots: Slots<Stage>,
-    pub(super) streams: Box<[Streamed]>,
-    pub(super) sections: Cache,
-    pub(super) items: Items,
+    pub(super) slots: Slots<Session>,
+    pub(super) bus: Bus,
     pub(super) tick_rate: u32,
     pub(super) ticks: u64,
 }
@@ -24,14 +20,47 @@ pub(super) struct State {
 impl State {
     pub(super) fn new(world: World, config: &ServerConfig) -> Self {
         Self {
-            clock: Clock::new(&world),
-            streams: (0..config.max_players).map(|_| Streamed::unsent(world.header.size)).collect(),
-            sections: Cache::warmed(&world),
             world,
             slots: Slots::new(config.max_players),
-            items: Items::new(),
+            bus: Bus::default(),
             tick_rate: config.tick_rate,
             ticks: 0,
+        }
+    }
+
+    pub(super) fn stage_kind(&self, id: ClientId) -> Option<StageKind> {
+        let session = self.slots.get(id)?;
+        (!session.closing).then_some(session.stage)
+    }
+
+    pub(super) fn is_closed(&self, id: ClientId) -> bool {
+        self.slots.get(id).is_none_or(|session| session.closing)
+    }
+
+    pub(super) fn advance(&mut self, id: ClientId) {
+        if let Some(session) = self.slots.get_mut(id).filter(|session| !session.closing) {
+            session.stage = session.stage.next();
+        }
+    }
+
+    pub(super) fn player(&self, id: ClientId) -> Option<&Player> {
+        self.slots.get(id).filter(|session| !session.closing).map(|session| &session.player)
+    }
+
+    pub(super) fn player_mut(&mut self, id: ClientId) -> Option<&mut Player> {
+        self.slots.get_mut(id).filter(|session| !session.closing).map(|session| &mut session.player)
+    }
+
+    pub(super) fn playing(&self) -> impl Iterator<Item = (ClientId, &Player)> {
+        self.slots
+            .iter()
+            .filter(|(_, session)| session.is_playing())
+            .map(|(id, session)| (id, &session.player))
+    }
+
+    pub(super) fn close(&mut self, id: ClientId) {
+        if let Some(session) = self.slots.get_mut(id) {
+            session.closing = true;
         }
     }
 

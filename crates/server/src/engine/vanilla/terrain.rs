@@ -5,18 +5,20 @@ use std::borrow::Cow;
 use std::mem;
 use std::ops::{Index, IndexMut, Range};
 
+use cobalt_format::World;
 use cobalt_format::world::header::Size;
-use cobalt_protocol::NetworkText;
 use cobalt_protocol::registry::{
-    CompleteConnectionAndSpawn, PlayerControls, SectionTileFrame, Status,
+    CompleteConnectionAndSpawn, PlayerControls, RequestEssentialTiles, SectionTileFrame, Status,
 };
+use cobalt_protocol::{C2s, NetworkText, Packet};
 
-use super::error::ClientError;
-use super::world_info::narrow;
-use super::{Outbox, State};
+use self::cache::Cache;
+use crate::config::ServerConfig;
+use crate::engine::world_info::narrow;
+use crate::engine::{
+    ClientError, Context, GameEvent, Handled, Incoming, Module, StageKind, Subscription, Verdict,
+};
 use crate::model::ClientId;
-
-pub(super) use cache::Cache;
 
 pub(super) const TILE_PIXELS: f32 = 16.0;
 const SECTION_WIDTH: usize = 200;
@@ -26,7 +28,7 @@ const RADIUS_Y: usize = 1;
 const STATUS_TEXT: &str = "LegacyInterface.44";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Section {
+struct Section {
     column: usize,
     row: usize,
 }
@@ -58,7 +60,7 @@ impl Region {
     }
 }
 
-pub(super) struct Atlas<T> {
+struct Atlas<T> {
     columns: usize,
     cells: Box<[T]>,
 }
@@ -93,10 +95,10 @@ impl<T> IndexMut<Section> for Atlas<T> {
     }
 }
 
-pub(super) type Streamed = Atlas<bool>;
+type Streamed = Atlas<bool>;
 
 impl Streamed {
-    pub(super) fn unsent(size: Size) -> Self {
+    fn unsent(size: Size) -> Self {
         Self::new(size, false)
     }
 
@@ -141,62 +143,94 @@ impl Window {
     }
 }
 
-impl State {
-    pub(super) fn stream_sections(
-        &mut self,
-        id: ClientId,
-        controls: &PlayerControls<'_>,
-        out: &mut Outbox,
-    ) -> Result<(), ClientError> {
-        let size = self.world.header.size;
-        let window = Window::around(size, tile(controls.x), tile(controls.y));
-        self.stream(id, &window, out)
+pub(super) struct TerrainModule {
+    streams: Box<[Streamed]>,
+    sections: Cache,
+}
+
+impl TerrainModule {
+    pub(super) fn new(world: &World, config: &ServerConfig) -> Self {
+        let size = world.header.size;
+        Self {
+            streams: (0..config.max_players).map(|_| Streamed::unsent(size)).collect(),
+            sections: Cache::warmed(world),
+        }
     }
 
-    pub(super) fn stream_spawn(
+    fn follow(
         &mut self,
+        cx: &mut Context<'_>,
         id: ClientId,
-        out: &mut Outbox,
+        controls: &PlayerControls<'_>,
     ) -> Result<(), ClientError> {
-        let spawn = self.world.header.locations.spawn;
-        let window = Window::around(self.world.header.size, spawn.x, spawn.y);
+        let window = Window::around(cx.world().header.size, tile(controls.x), tile(controls.y));
+        self.stream(cx, id, &window)
+    }
+
+    fn spawn(&mut self, cx: &mut Context<'_>, id: ClientId) -> Result<(), ClientError> {
+        let header = &cx.world().header;
+        let spawn = header.locations.spawn;
+        let window = Window::around(header.size, spawn.x, spawn.y);
 
         let status = Status {
             status_max: narrow(window.len()),
             text: NetworkText::Localized { key: STATUS_TEXT, args: Cow::Borrowed(&[]) },
             flags: 0,
         };
-        out.send(id, status.into())?;
+        cx.send(id, status.into())?;
         self.streams[id.index()].reset();
-        self.stream(id, &window, out)?;
-        out.send(id, CompleteConnectionAndSpawn {}.into())?;
-        Ok(())
-    }
-
-    pub(super) fn invalidate_section(&mut self, x: i32, y: i32) {
-        if let Some(section) = Section::containing(self.world.header.size, x, y) {
-            self.sections.invalidate(section);
-        }
+        self.stream(cx, id, &window)?;
+        cx.send(id, CompleteConnectionAndSpawn {}.into())
     }
 
     fn stream(
         &mut self,
+        cx: &mut Context<'_>,
         id: ClientId,
         window: &Window,
-        out: &mut Outbox,
     ) -> Result<(), ClientError> {
         let streamed = &mut self.streams[id.index()];
         let pending: Vec<Section> =
             window.sections().filter(|&section| streamed.claim(section)).collect();
         let Some(frame) = frame(&pending) else { return Ok(()) };
 
-        self.sections.ensure(&self.world, &pending)?;
+        self.sections.ensure(cx.world(), &pending)?;
         for &section in &pending {
             if let Some(packet) = self.sections.packet(section) {
-                out.relay(id, packet);
+                cx.relay(id, packet);
             }
         }
-        out.send(id, frame.into())?;
+        cx.send(id, frame.into())
+    }
+}
+
+impl Module for TerrainModule {
+    fn name(&self) -> &'static str {
+        "terrain"
+    }
+
+    fn subscriptions(&self) -> Vec<Subscription> {
+        vec![
+            Subscription::packets_in([StageKind::Loading], [RequestEssentialTiles::ID]),
+            Subscription::playing([PlayerControls::ID]),
+        ]
+    }
+
+    fn packet(&mut self, cx: &mut Context<'_>, from: ClientId, incoming: &Incoming<'_>) -> Handled {
+        match &incoming.packet {
+            Some(C2s::PlayerControls(controls)) => self.follow(cx, from, controls)?,
+            _ if incoming.frame.kind == RequestEssentialTiles::ID => self.spawn(cx, from)?,
+            _ => {}
+        }
+        Ok(Verdict::Pass)
+    }
+
+    fn event(&mut self, cx: &mut Context<'_>, event: &GameEvent) -> Result<(), ClientError> {
+        if let GameEvent::TileChanged { x, y } = event {
+            if let Some(section) = Section::containing(cx.world().header.size, *x, *y) {
+                self.sections.invalidate(section);
+            }
+        }
         Ok(())
     }
 }

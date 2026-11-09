@@ -11,7 +11,7 @@ use tokio::time::{self, Instant, Interval, MissedTickBehavior};
 use super::handle::{Control, ServerHandle};
 use super::watchdog::{Heartbeat, Work};
 use crate::config::ServerConfig;
-use crate::engine::{Admission, Engine, Flow, Outbox};
+use crate::engine::{Admission, Engine, Flow, Module, Outbox};
 use crate::error::{ServerError, ServerResult};
 use crate::log::debug_log;
 use crate::model::{Event, Status};
@@ -40,6 +40,14 @@ pub struct Server {
 
 impl Server {
     pub fn try_new(world: World, config: ServerConfig) -> ServerResult<(Self, ServerHandle)> {
+        Self::try_with(world, config, Vec::new())
+    }
+
+    pub fn try_with(
+        world: World,
+        config: ServerConfig,
+        modules: Vec<Box<dyn Module>>,
+    ) -> ServerResult<(Self, ServerHandle)> {
         config.validate()?;
 
         let (control_tx, control) = mpsc::channel(CONTROL_CAPACITY);
@@ -48,7 +56,7 @@ impl Server {
         let (shutdown, shutdown_signal) = watch::channel(false);
 
         let server = Self {
-            engine: Engine::new(world, &config),
+            engine: Engine::with_modules(world, &config, modules),
             outbox: Outbox::new(config.max_players),
             queues: (0..config.max_players).map(|_| None).collect(),
             control,
@@ -70,7 +78,15 @@ impl Server {
     }
 
     pub fn spawn(world: World, config: ServerConfig) -> ServerResult<RunningServer> {
-        let (server, handle) = Self::try_new(world, config)?;
+        Self::spawn_with(world, config, Vec::new())
+    }
+
+    pub fn spawn_with(
+        world: World,
+        config: ServerConfig,
+        modules: Vec<Box<dyn Module>>,
+    ) -> ServerResult<RunningServer> {
+        let (server, handle) = Self::try_with(world, config, modules)?;
         let listener = config
             .listen
             .map(|addr| Listener::bind(addr, server.hub.clone()))
@@ -101,6 +117,9 @@ impl Server {
         let mut controlled = true;
         let heartbeat = self.heartbeat.clone();
         let mut batch = Vec::with_capacity(TRAFFIC_BATCH);
+
+        self.engine.start(&mut self.outbox);
+        self.flush();
 
         loop {
             tokio::select! {
@@ -135,6 +154,9 @@ impl Server {
                 break;
             }
         }
+
+        self.engine.stop(&mut self.outbox);
+        self.flush();
 
         debug_log!("event: {:?}", Event::Stopped);
         let _ = self.events.send(Event::Stopped);
