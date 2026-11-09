@@ -42,11 +42,12 @@ fn say(cx: &mut Context<'_>, id: ClientId, request: &ChatRequest<'_>) -> Result<
     {
         return Ok(());
     }
-    let Some(player) = cx.player(id) else { return Ok(()) };
 
-    let line = format!("<{}> {text}", player.name);
+    let Some(_) = cx.player(id) else { return Ok(()) }; // would be impossible to reach (?)
+                                                        // TODO: a server /say command
+
     let mut body = Vec::new();
-    ChatBroadcast { author: id.get(), text: NetworkText::Literal(&line), color: WHITE }
+    ChatBroadcast { author: id.get(), text: NetworkText::Literal(text), color: WHITE }
         .encode(&mut Writer::new(&mut body))?;
     let module = NetModule { module: CHAT_MODULE, rest: Remainder(&body) };
     cx.broadcast(Audience::Everyone, module.into());
